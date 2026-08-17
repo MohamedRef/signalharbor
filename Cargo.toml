@@ -1,0 +1,15 @@
+[package]
+name = "signalharbor"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+description = "Durable webhook ingestion, deduplication, retry, and routing"
+
+[dependencies]
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = "deny"
+pedantic = "warn"
