@@ -63,9 +63,8 @@ cargo doc --no-deps
 docker build --tag signalharbor-dependencies .
 ```
 
-## Development disclosure
+## Ownership
 
-This private project is owned by MohamedRef and developed with AI assistance.
-Project direction, review, repository ownership, and final decisions remain
-with MohamedRef. The repository does not claim external eligibility or
-certification.
+This private project is developed and owned by MohamedRef. Project direction,
+review, repository ownership, and final decisions remain with MohamedRef. The
+repository does not claim external eligibility or certification.
