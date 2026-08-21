@@ -150,6 +150,8 @@ impl SignalHarbor {
                     attempts: 0,
                     next_attempt_at: event.received_at,
                     last_error: None,
+                    lease_owner: None,
+                    lease_expires_at: None,
                 }
             })
             .collect::<Vec<_>>();
@@ -225,6 +227,82 @@ impl SignalHarbor {
         Ok(rows)
     }
 
+    /// Atomically leases due deliveries to one worker for a bounded interval.
+    ///
+    /// Expired leases are eligible for recovery by another worker. Every lease
+    /// snapshot is journaled in one transaction before any in-memory delivery
+    /// changes, so a restart cannot expose a claim that was not persisted.
+    ///
+    /// # Errors
+    ///
+    /// Returns validation errors for an invalid owner, limit, or lease duration,
+    /// or a journal error without mutating in-memory state.
+    pub fn claim_due(
+        &mut self,
+        worker: &str,
+        now: u64,
+        limit: usize,
+        lease_seconds: u64,
+    ) -> Result<Vec<Delivery>, HarborError> {
+        let worker = crate::model::required(worker, "worker", 120)?;
+        if limit == 0 || limit > 1_000 {
+            return Err(HarborError::Validation(
+                "claim limit must be from 1 through 1000".into(),
+            ));
+        }
+        if !(1..=3_600).contains(&lease_seconds) {
+            return Err(HarborError::Validation(
+                "lease_seconds must be from 1 through 3600".into(),
+            ));
+        }
+        let mut available = self
+            .deliveries
+            .values()
+            .filter(|delivery| delivery.due(now))
+            .cloned()
+            .collect::<Vec<_>>();
+        available.sort_by(|left, right| {
+            (left.next_attempt_at, &left.id).cmp(&(right.next_attempt_at, &right.id))
+        });
+        available.truncate(limit);
+        let expires_at = now.saturating_add(lease_seconds);
+        let claimed = available
+            .into_iter()
+            .map(|mut delivery| {
+                delivery.lease_owner = Some(worker.clone());
+                delivery.lease_expires_at = Some(expires_at);
+                delivery
+            })
+            .collect::<Vec<_>>();
+        let records = claimed
+            .iter()
+            .cloned()
+            .map(Record::Delivery)
+            .collect::<Vec<_>>();
+        self.journal.append_batch(&records)?;
+        for delivery in &claimed {
+            self.deliveries
+                .insert(delivery.id.clone(), delivery.clone());
+        }
+        Ok(claimed)
+    }
+
+    /// Records an attempt only when the caller owns a live delivery lease.
+    ///
+    /// # Errors
+    ///
+    /// Returns a conflict for a missing, expired, or differently owned lease.
+    pub fn record_claimed_attempt(
+        &mut self,
+        delivery_id: &str,
+        worker: &str,
+        attempted_at: u64,
+        outcome: AttemptOutcome,
+    ) -> Result<AttemptResult, HarborError> {
+        let worker = crate::model::required(worker, "worker", 120)?;
+        self.record_attempt_internal(delivery_id, attempted_at, outcome, Some(&worker))
+    }
+
     /// Applies an HTTP or transport outcome and persists the resulting state.
     ///
     /// # Errors
@@ -236,6 +314,16 @@ impl SignalHarbor {
         delivery_id: &str,
         attempted_at: u64,
         outcome: AttemptOutcome,
+    ) -> Result<AttemptResult, HarborError> {
+        self.record_attempt_internal(delivery_id, attempted_at, outcome, None)
+    }
+
+    fn record_attempt_internal(
+        &mut self,
+        delivery_id: &str,
+        attempted_at: u64,
+        outcome: AttemptOutcome,
+        required_worker: Option<&str>,
     ) -> Result<AttemptResult, HarborError> {
         let current = self.delivery(delivery_id)?;
         if current.state != DeliveryState::Pending {
@@ -249,12 +337,32 @@ impl SignalHarbor {
                 due_at: current.next_attempt_at,
             });
         }
+        match required_worker {
+            Some(worker)
+                if current.lease_owner.as_deref() != Some(worker)
+                    || current
+                        .lease_expires_at
+                        .is_none_or(|expires_at| expires_at <= attempted_at) =>
+            {
+                return Err(HarborError::Conflict(format!(
+                    "worker {worker} does not own a live lease for delivery {delivery_id}"
+                )));
+            }
+            None if current.leased(attempted_at) => {
+                return Err(HarborError::Conflict(format!(
+                    "delivery {delivery_id} has an active worker lease"
+                )));
+            }
+            _ => {}
+        }
         let route = self
             .routes
             .get(&current.route_id)
             .ok_or_else(|| HarborError::Journal(format!("missing route {}", current.route_id)))?;
         let mut updated = current;
         updated.attempts += 1;
+        updated.lease_owner = None;
+        updated.lease_expires_at = None;
         let (successful, retryable, error) = classify(outcome);
         let mut retried = false;
         let mut retry_delay_seconds = None;
@@ -311,6 +419,8 @@ impl SignalHarbor {
             attempts: 0,
             next_attempt_at: due_at,
             last_error: None,
+            lease_owner: None,
+            lease_expires_at: None,
             ..current
         };
         self.journal.append(&Record::Delivery(updated.clone()))?;
@@ -380,6 +490,18 @@ impl SignalHarbor {
                 return Err(HarborError::Journal(format!(
                     "delivery {} references missing route {}",
                     delivery.id, delivery.route_id
+                )));
+            }
+            if delivery.lease_owner.is_some() != delivery.lease_expires_at.is_some() {
+                return Err(HarborError::Journal(format!(
+                    "delivery {} has an incomplete lease",
+                    delivery.id
+                )));
+            }
+            if delivery.state != DeliveryState::Pending && delivery.lease_owner.is_some() {
+                return Err(HarborError::Journal(format!(
+                    "terminal delivery {} cannot retain a lease",
+                    delivery.id
                 )));
             }
         }

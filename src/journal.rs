@@ -136,6 +136,13 @@ fn encode_record(record: &Record) -> String {
                 .last_error
                 .as_deref()
                 .map_or_else(|| "-".to_owned(), encode_text),
+            delivery
+                .lease_owner
+                .as_deref()
+                .map_or_else(|| "-".to_owned(), encode_text),
+            delivery
+                .lease_expires_at
+                .map_or_else(|| "-".to_owned(), |value| value.to_string()),
         ]
         .join("|"),
     }
@@ -169,7 +176,7 @@ fn decode_record(line: &str) -> Result<Record, HarborError> {
             body: decode_bytes(parts[5])?,
             received_at: number(parts[6], "received_at")?,
         })),
-        Some("D") if parts.len() == 9 => Ok(Record::Delivery(Delivery {
+        Some("D") if parts.len() == 9 || parts.len() == 11 => Ok(Record::Delivery(Delivery {
             id: decode_text(parts[1])?,
             event_id: decode_text(parts[2])?,
             route_id: decode_text(parts[3])?,
@@ -181,6 +188,16 @@ fn decode_record(line: &str) -> Result<Record, HarborError> {
                 None
             } else {
                 Some(decode_text(parts[8])?)
+            },
+            lease_owner: if parts.len() == 9 || parts[9] == "-" {
+                None
+            } else {
+                Some(decode_text(parts[9])?)
+            },
+            lease_expires_at: if parts.len() == 9 || parts[10] == "-" {
+                None
+            } else {
+                Some(number(parts[10], "lease expiry")?)
             },
         })),
         Some(kind) => Err(HarborError::Journal(format!(

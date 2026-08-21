@@ -206,12 +206,27 @@ pub struct Delivery {
     pub attempts: u16,
     pub next_attempt_at: u64,
     pub last_error: Option<String>,
+    pub lease_owner: Option<String>,
+    pub lease_expires_at: Option<u64>,
 }
 
 impl Delivery {
     #[must_use]
     pub fn due(&self, now: u64) -> bool {
-        self.state == DeliveryState::Pending && self.next_attempt_at <= now
+        self.state == DeliveryState::Pending
+            && self.next_attempt_at <= now
+            && self
+                .lease_expires_at
+                .is_none_or(|expires_at| expires_at <= now)
+    }
+
+    #[must_use]
+    pub fn leased(&self, now: u64) -> bool {
+        self.state == DeliveryState::Pending
+            && self.lease_owner.is_some()
+            && self
+                .lease_expires_at
+                .is_some_and(|expires_at| expires_at > now)
     }
 }
 

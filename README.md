@@ -25,6 +25,9 @@ encoding. A malformed journal fails closed and identifies its line number.
 - Dead letters can be redriven only while their route is active.
 - Due queues and summaries are deterministic, making worker behavior easy to
   test and monitor.
+- Workers can atomically claim due deliveries with durable, expiring leases.
+  Only the lease owner can report the attempt while it is live; after expiry,
+  another worker can recover the delivery without manual journal repair.
 
 ```rust
 use signalharbor::{Route, SignalHarbor, WebhookInput};
