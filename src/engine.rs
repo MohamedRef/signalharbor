@@ -3,8 +3,8 @@ use std::path::Path;
 
 use crate::journal::{FileJournal, Record};
 use crate::model::{
-    AttemptOutcome, AttemptResult, Delivery, DeliveryState, HarborError, HarborSummary,
-    IngestResult, Route, WebhookEvent, WebhookInput,
+    AttemptHistorySummary, AttemptOutcome, AttemptResult, Delivery, DeliveryAttempt, DeliveryState,
+    HarborError, HarborSummary, IngestResult, Route, WebhookEvent, WebhookInput,
 };
 
 pub struct SignalHarbor {
@@ -12,9 +12,11 @@ pub struct SignalHarbor {
     routes: BTreeMap<String, Route>,
     events: BTreeMap<String, WebhookEvent>,
     deliveries: BTreeMap<String, Delivery>,
+    attempts: BTreeMap<String, Vec<DeliveryAttempt>>,
     dedupe: HashMap<(String, String), String>,
     event_sequence: u64,
     delivery_sequence: u64,
+    attempt_sequence: u64,
 }
 
 impl SignalHarbor {
@@ -31,9 +33,11 @@ impl SignalHarbor {
             routes: BTreeMap::new(),
             events: BTreeMap::new(),
             deliveries: BTreeMap::new(),
+            attempts: BTreeMap::new(),
             dedupe: HashMap::new(),
             event_sequence: 0,
             delivery_sequence: 0,
+            attempt_sequence: 0,
         };
         for record in harbor.journal.replay()? {
             match record {
@@ -45,6 +49,13 @@ impl SignalHarbor {
                 }
                 Record::Delivery(delivery) => {
                     harbor.deliveries.insert(delivery.id.clone(), delivery);
+                }
+                Record::Attempt(attempt) => {
+                    harbor
+                        .attempts
+                        .entry(attempt.delivery_id.clone())
+                        .or_default()
+                        .push(attempt);
                 }
             }
         }
@@ -200,6 +211,53 @@ impl SignalHarbor {
             .get(delivery_id)
             .cloned()
             .ok_or_else(|| HarborError::NotFound(format!("delivery {delivery_id}")))
+    }
+
+    /// Returns the immutable, durable attempt history for one delivery.
+    ///
+    /// Redriving a dead letter starts a new delivery attempt cycle but does not
+    /// erase earlier records. Histories are ordered by their global journal
+    /// sequence and returned as defensive clones.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HarborError::NotFound`] when the delivery id is unknown.
+    pub fn attempt_history(&self, delivery_id: &str) -> Result<Vec<DeliveryAttempt>, HarborError> {
+        if !self.deliveries.contains_key(delivery_id) {
+            return Err(HarborError::NotFound(format!("delivery {delivery_id}")));
+        }
+        Ok(self.attempts.get(delivery_id).cloned().unwrap_or_default())
+    }
+
+    /// Aggregates persisted delivery attempts for operational monitoring.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HarborError::NotFound`] when the delivery id is unknown.
+    pub fn attempt_history_summary(
+        &self,
+        delivery_id: &str,
+    ) -> Result<AttemptHistorySummary, HarborError> {
+        let history = self.attempt_history(delivery_id)?;
+        Ok(AttemptHistorySummary {
+            delivery_id: delivery_id.to_owned(),
+            total: history.len(),
+            retried: history.iter().filter(|attempt| attempt.retried).count(),
+            succeeded: history
+                .iter()
+                .filter(|attempt| attempt.resulting_state == DeliveryState::Succeeded)
+                .count(),
+            dead_lettered: history
+                .iter()
+                .filter(|attempt| attempt.resulting_state == DeliveryState::DeadLetter)
+                .count(),
+            transport_failures: history
+                .iter()
+                .filter(|attempt| matches!(attempt.outcome, AttemptOutcome::Transport(_)))
+                .count(),
+            first_attempt_at: history.first().map(|attempt| attempt.attempted_at),
+            last_attempt_at: history.last().map(|attempt| attempt.attempted_at),
+        })
     }
 
     /// Selects pending deliveries due at or before `now` in stable order.
@@ -363,6 +421,7 @@ impl SignalHarbor {
         updated.attempts += 1;
         updated.lease_owner = None;
         updated.lease_expires_at = None;
+        let persisted_outcome = outcome.clone();
         let (successful, retryable, error) = classify(outcome);
         let mut retried = false;
         let mut retry_delay_seconds = None;
@@ -383,8 +442,30 @@ impl SignalHarbor {
             updated.state = DeliveryState::DeadLetter;
             updated.last_error = Some(error);
         }
-        self.journal.append(&Record::Delivery(updated.clone()))?;
+        let next_sequence = self.attempt_sequence + 1;
+        let attempt = DeliveryAttempt {
+            id: format!("att-{next_sequence:012}"),
+            sequence: next_sequence,
+            delivery_id: updated.id.clone(),
+            cycle_attempt: updated.attempts,
+            attempted_at,
+            worker: required_worker.map(str::to_owned),
+            outcome: persisted_outcome,
+            resulting_state: updated.state,
+            retried,
+            next_attempt_at: retried.then_some(updated.next_attempt_at),
+            error: updated.last_error.clone(),
+        };
+        self.journal.append_batch(&[
+            Record::Delivery(updated.clone()),
+            Record::Attempt(attempt.clone()),
+        ])?;
         self.deliveries.insert(updated.id.clone(), updated.clone());
+        self.attempt_sequence = next_sequence;
+        self.attempts
+            .entry(updated.id.clone())
+            .or_default()
+            .push(attempt);
         Ok(AttemptResult {
             delivery: updated,
             retried,
@@ -505,8 +586,41 @@ impl SignalHarbor {
                 )));
             }
         }
+        let mut latest_attempt_sequence = 0;
+        for (delivery_id, attempts) in &mut self.attempts {
+            if !self.deliveries.contains_key(delivery_id) {
+                return Err(HarborError::Journal(format!(
+                    "attempt history references missing delivery {delivery_id}"
+                )));
+            }
+            attempts.sort_by_key(|attempt| attempt.sequence);
+            let mut previous = None;
+            for attempt in attempts {
+                if attempt.delivery_id != *delivery_id {
+                    return Err(HarborError::Journal(format!(
+                        "attempt {} is indexed under the wrong delivery",
+                        attempt.id
+                    )));
+                }
+                if attempt.sequence == 0 || previous.is_some_and(|value| value >= attempt.sequence)
+                {
+                    return Err(HarborError::Journal(format!(
+                        "attempt sequence is invalid for delivery {delivery_id}"
+                    )));
+                }
+                if attempt.retried != attempt.next_attempt_at.is_some() {
+                    return Err(HarborError::Journal(format!(
+                        "attempt {} has inconsistent retry scheduling",
+                        attempt.id
+                    )));
+                }
+                previous = Some(attempt.sequence);
+                latest_attempt_sequence = latest_attempt_sequence.max(attempt.sequence);
+            }
+        }
         self.event_sequence = self.events.len() as u64;
         self.delivery_sequence = self.deliveries.len() as u64;
+        self.attempt_sequence = latest_attempt_sequence;
         Ok(())
     }
 }

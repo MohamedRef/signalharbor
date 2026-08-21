@@ -237,6 +237,33 @@ pub enum AttemptOutcome {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeliveryAttempt {
+    pub id: String,
+    pub sequence: u64,
+    pub delivery_id: String,
+    pub cycle_attempt: u16,
+    pub attempted_at: u64,
+    pub worker: Option<String>,
+    pub outcome: AttemptOutcome,
+    pub resulting_state: DeliveryState,
+    pub retried: bool,
+    pub next_attempt_at: Option<u64>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AttemptHistorySummary {
+    pub delivery_id: String,
+    pub total: usize,
+    pub retried: usize,
+    pub succeeded: usize,
+    pub dead_lettered: usize,
+    pub transport_failures: usize,
+    pub first_attempt_at: Option<u64>,
+    pub last_attempt_at: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IngestResult {
     pub event: WebhookEvent,
     pub duplicate: bool,

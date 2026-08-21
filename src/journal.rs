@@ -2,13 +2,16 @@ use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 
-use crate::model::{Delivery, DeliveryState, HarborError, Route, WebhookEvent};
+use crate::model::{
+    AttemptOutcome, Delivery, DeliveryAttempt, DeliveryState, HarborError, Route, WebhookEvent,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Record {
     Route(Route),
     Event(WebhookEvent),
     Delivery(Delivery),
+    Attempt(DeliveryAttempt),
 }
 
 #[derive(Debug, Clone)]
@@ -145,6 +148,36 @@ fn encode_record(record: &Record) -> String {
                 .map_or_else(|| "-".to_owned(), |value| value.to_string()),
         ]
         .join("|"),
+        Record::Attempt(attempt) => {
+            let (outcome_kind, outcome_value) = match &attempt.outcome {
+                AttemptOutcome::Http(status) => ("http", status.to_string()),
+                AttemptOutcome::Transport(message) => ("transport", encode_text(message)),
+            };
+            [
+                "A".to_owned(),
+                encode_text(&attempt.id),
+                attempt.sequence.to_string(),
+                encode_text(&attempt.delivery_id),
+                attempt.cycle_attempt.to_string(),
+                attempt.attempted_at.to_string(),
+                attempt
+                    .worker
+                    .as_deref()
+                    .map_or_else(|| "-".to_owned(), encode_text),
+                outcome_kind.to_owned(),
+                outcome_value,
+                attempt.resulting_state.code().to_owned(),
+                u8::from(attempt.retried).to_string(),
+                attempt
+                    .next_attempt_at
+                    .map_or_else(|| "-".to_owned(), |value| value.to_string()),
+                attempt
+                    .error
+                    .as_deref()
+                    .map_or_else(|| "-".to_owned(), encode_text),
+            ]
+            .join("|")
+        }
     }
 }
 
@@ -198,6 +231,47 @@ fn decode_record(line: &str) -> Result<Record, HarborError> {
                 None
             } else {
                 Some(number(parts[10], "lease expiry")?)
+            },
+        })),
+        Some("A") if parts.len() == 13 => Ok(Record::Attempt(DeliveryAttempt {
+            id: decode_text(parts[1])?,
+            sequence: number(parts[2], "attempt sequence")?,
+            delivery_id: decode_text(parts[3])?,
+            cycle_attempt: number(parts[4], "cycle attempt")?,
+            attempted_at: number(parts[5], "attempted_at")?,
+            worker: if parts[6] == "-" {
+                None
+            } else {
+                Some(decode_text(parts[6])?)
+            },
+            outcome: match parts[7] {
+                "http" => AttemptOutcome::Http(number(parts[8], "HTTP status")?),
+                "transport" => AttemptOutcome::Transport(decode_text(parts[8])?),
+                value => {
+                    return Err(HarborError::Journal(format!(
+                        "unknown attempt outcome: {value}"
+                    )));
+                }
+            },
+            resulting_state: DeliveryState::from_code(parts[9])?,
+            retried: match parts[10] {
+                "1" => true,
+                "0" => false,
+                value => {
+                    return Err(HarborError::Journal(format!(
+                        "invalid attempt retried flag: {value}"
+                    )));
+                }
+            },
+            next_attempt_at: if parts[11] == "-" {
+                None
+            } else {
+                Some(number(parts[11], "attempt next due")?)
+            },
+            error: if parts[12] == "-" {
+                None
+            } else {
+                Some(decode_text(parts[12])?)
             },
         })),
         Some(kind) => Err(HarborError::Journal(format!(
