@@ -28,6 +28,10 @@ encoding. A malformed journal fails closed and identifies its line number.
 - Workers can atomically claim due deliveries with durable, expiring leases.
   Only the lease owner can report the attempt while it is live; after expiry,
   another worker can recover the delivery without manual journal repair.
+- Every delivery attempt is journaled atomically with its resulting delivery
+  snapshot, including worker, transport or HTTP outcome, retry schedule, and
+  terminal state. Histories survive redrive and restart, and summaries expose
+  retry, success, dead-letter, transport-failure, and time-bound counts.
 
 ```rust
 use signalharbor::{Route, SignalHarbor, WebhookInput};
