@@ -40,6 +40,9 @@ encoding. A malformed journal fails closed and identifies its line number.
 - Historical backfill connects events that predate a route using an inclusive
   receive-time window and hard batch limit. Event-route pairs are idempotent,
   ordered deterministically, and committed as one durable delivery batch.
+- Endpoint rotation offers a future-only cutover or an atomic migration of
+  pending work that has never been attempted or leased. Attempted, leased, and
+  terminal deliveries retain their captured endpoint so retries remain stable.
 
 ```rust
 use signalharbor::{Route, SignalHarbor, WebhookInput};
@@ -67,7 +70,7 @@ assert!(!result.duplicate);
 
 ## Verification
 
-The project has no third-party runtime dependencies. Rust 1.89.0, Rustfmt, and
+The project has no third-party runtime dependencies. Rust 1.92.0, Rustfmt, and
 Clippy are pinned in `rust-toolchain.toml`.
 
 ```bash
