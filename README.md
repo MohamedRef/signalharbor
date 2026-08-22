@@ -37,6 +37,9 @@ encoding. A malformed journal fails closed and identifies its line number.
   work remains durable but unavailable to workers until the cooldown expires.
   A successful half-open probe closes the circuit, a failed probe restarts the
   cooldown, and both failure counts and open deadlines survive process restart.
+- Historical backfill connects events that predate a route using an inclusive
+  receive-time window and hard batch limit. Event-route pairs are idempotent,
+  ordered deterministically, and committed as one durable delivery batch.
 
 ```rust
 use signalharbor::{Route, SignalHarbor, WebhookInput};
