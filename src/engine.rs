@@ -3,8 +3,9 @@ use std::path::Path;
 
 use crate::journal::{FileJournal, Record};
 use crate::model::{
-    AttemptHistorySummary, AttemptOutcome, AttemptResult, Delivery, DeliveryAttempt, DeliveryState,
-    HarborError, HarborSummary, IngestResult, Route, WebhookEvent, WebhookInput,
+    AttemptHistorySummary, AttemptOutcome, AttemptResult, CircuitState, Delivery, DeliveryAttempt,
+    DeliveryState, HarborError, HarborSummary, IngestResult, Route, RouteCircuitHealth,
+    WebhookEvent, WebhookInput,
 };
 
 pub struct SignalHarbor {
@@ -105,6 +106,70 @@ impl SignalHarbor {
     #[must_use]
     pub fn routes(&self) -> Vec<Route> {
         self.routes.values().cloned().collect()
+    }
+
+    /// Configures failure isolation for a route and resets its current circuit state.
+    ///
+    /// # Errors
+    ///
+    /// Returns validation errors for unsupported bounds, not-found for an unknown
+    /// route, or a journal error when the configuration cannot be persisted.
+    pub fn configure_circuit_breaker(
+        &mut self,
+        route_id: &str,
+        failure_threshold: u16,
+        cooldown_seconds: u64,
+    ) -> Result<RouteCircuitHealth, HarborError> {
+        if !(1..=100).contains(&failure_threshold) {
+            return Err(HarborError::Validation(
+                "failure_threshold must be from 1 through 100".into(),
+            ));
+        }
+        if !(1..=86_400).contains(&cooldown_seconds) {
+            return Err(HarborError::Validation(
+                "cooldown_seconds must be from 1 through 86400".into(),
+            ));
+        }
+        let mut route = self
+            .routes
+            .get(route_id)
+            .cloned()
+            .ok_or_else(|| HarborError::NotFound(format!("route {route_id}")))?;
+        route.failure_threshold = failure_threshold;
+        route.cooldown_seconds = cooldown_seconds;
+        route.consecutive_failures = 0;
+        route.circuit_open_until = None;
+        self.journal.append(&Record::Route(route.clone()))?;
+        self.routes.insert(route.id.clone(), route);
+        self.route_circuit_health(route_id, 0)
+    }
+
+    /// Reports whether a route is closed, cooling down, or ready for a probe.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HarborError::NotFound`] when the route id is unknown.
+    pub fn route_circuit_health(
+        &self,
+        route_id: &str,
+        now: u64,
+    ) -> Result<RouteCircuitHealth, HarborError> {
+        let route = self
+            .routes
+            .get(route_id)
+            .ok_or_else(|| HarborError::NotFound(format!("route {route_id}")))?;
+        let state = match route.circuit_open_until {
+            Some(until) if until > now => CircuitState::Open { until },
+            Some(_) => CircuitState::HalfOpen,
+            None => CircuitState::Closed,
+        };
+        Ok(RouteCircuitHealth {
+            route_id: route.id.clone(),
+            state,
+            consecutive_failures: route.consecutive_failures,
+            failure_threshold: route.failure_threshold,
+            cooldown_seconds: route.cooldown_seconds,
+        })
     }
 
     /// Accepts an event, deduplicates it, and creates initial deliveries in one transaction.
@@ -275,7 +340,7 @@ impl SignalHarbor {
         let mut rows = self
             .deliveries
             .values()
-            .filter(|delivery| delivery.due(now))
+            .filter(|delivery| delivery.due(now) && self.route_available(&delivery.route_id, now))
             .cloned()
             .collect::<Vec<_>>();
         rows.sort_by(|left, right| {
@@ -316,7 +381,7 @@ impl SignalHarbor {
         let mut available = self
             .deliveries
             .values()
-            .filter(|delivery| delivery.due(now))
+            .filter(|delivery| delivery.due(now) && self.route_available(&delivery.route_id, now))
             .cloned()
             .collect::<Vec<_>>();
         available.sort_by(|left, right| {
@@ -413,16 +478,15 @@ impl SignalHarbor {
             }
             _ => {}
         }
-        let route = self
-            .routes
-            .get(&current.route_id)
-            .ok_or_else(|| HarborError::Journal(format!("missing route {}", current.route_id)))?;
+        let mut route = self.route_for_attempt(&current.route_id, attempted_at)?;
+        let previous_route = route.clone();
         let mut updated = current;
         updated.attempts += 1;
         updated.lease_owner = None;
         updated.lease_expires_at = None;
         let persisted_outcome = outcome.clone();
         let (successful, retryable, error) = classify(outcome);
+        update_circuit(&mut route, successful, retryable, attempted_at);
         let mut retried = false;
         let mut retry_delay_seconds = None;
         if successful {
@@ -456,11 +520,16 @@ impl SignalHarbor {
             next_attempt_at: retried.then_some(updated.next_attempt_at),
             error: updated.last_error.clone(),
         };
-        self.journal.append_batch(&[
+        let mut records = vec![
             Record::Delivery(updated.clone()),
             Record::Attempt(attempt.clone()),
-        ])?;
+        ];
+        if route != previous_route {
+            records.push(Record::Route(route.clone()));
+        }
+        self.journal.append_batch(&records)?;
         self.deliveries.insert(updated.id.clone(), updated.clone());
+        self.routes.insert(route.id.clone(), route);
         self.attempt_sequence = next_sequence;
         self.attempts
             .entry(updated.id.clone())
@@ -549,6 +618,33 @@ impl SignalHarbor {
             .collect()
     }
 
+    fn route_available(&self, route_id: &str, now: u64) -> bool {
+        self.routes.get(route_id).is_some_and(|route| {
+            route.active
+                && route
+                    .circuit_open_until
+                    .is_none_or(|open_until| open_until <= now)
+        })
+    }
+
+    fn route_for_attempt(&self, route_id: &str, attempted_at: u64) -> Result<Route, HarborError> {
+        let route = self
+            .routes
+            .get(route_id)
+            .cloned()
+            .ok_or_else(|| HarborError::Journal(format!("missing route {route_id}")))?;
+        if let Some(open_until) = route
+            .circuit_open_until
+            .filter(|open_until| *open_until > attempted_at)
+        {
+            return Err(HarborError::Conflict(format!(
+                "route {} circuit is open until {open_until}",
+                route.id
+            )));
+        }
+        Ok(route)
+    }
+
     fn rebuild_indexes(&mut self) -> Result<(), HarborError> {
         self.dedupe.clear();
         for event in self.events.values() {
@@ -583,6 +679,20 @@ impl SignalHarbor {
                 return Err(HarborError::Journal(format!(
                     "terminal delivery {} cannot retain a lease",
                     delivery.id
+                )));
+            }
+        }
+        for route in self.routes.values() {
+            if !(1..=100).contains(&route.failure_threshold) {
+                return Err(HarborError::Journal(format!(
+                    "route {} has invalid failure threshold",
+                    route.id
+                )));
+            }
+            if !(1..=86_400).contains(&route.cooldown_seconds) {
+                return Err(HarborError::Journal(format!(
+                    "route {} has invalid circuit cooldown",
+                    route.id
                 )));
             }
         }
@@ -622,6 +732,18 @@ impl SignalHarbor {
         self.delivery_sequence = self.deliveries.len() as u64;
         self.attempt_sequence = latest_attempt_sequence;
         Ok(())
+    }
+}
+
+fn update_circuit(route: &mut Route, successful: bool, retryable: bool, attempted_at: u64) {
+    if successful || !retryable {
+        route.consecutive_failures = 0;
+        route.circuit_open_until = None;
+        return;
+    }
+    route.consecutive_failures = route.consecutive_failures.saturating_add(1);
+    if route.consecutive_failures >= route.failure_threshold {
+        route.circuit_open_until = Some(attempted_at.saturating_add(route.cooldown_seconds));
     }
 }
 

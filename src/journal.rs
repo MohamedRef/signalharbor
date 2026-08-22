@@ -114,6 +114,12 @@ fn encode_record(record: &Record) -> String {
             route.max_attempts.to_string(),
             route.base_delay_seconds.to_string(),
             u8::from(route.active).to_string(),
+            route.failure_threshold.to_string(),
+            route.cooldown_seconds.to_string(),
+            route.consecutive_failures.to_string(),
+            route
+                .circuit_open_until
+                .map_or_else(|| "-".to_owned(), |value| value.to_string()),
         ]
         .join("|"),
         Record::Event(event) => [
@@ -184,23 +190,9 @@ fn encode_record(record: &Record) -> String {
 fn decode_record(line: &str) -> Result<Record, HarborError> {
     let parts = line.split('|').collect::<Vec<_>>();
     match parts.first().copied() {
-        Some("R") if parts.len() == 8 => Ok(Record::Route(Route {
-            id: decode_text(parts[1])?,
-            tenant: decode_text(parts[2])?,
-            topic_pattern: decode_text(parts[3])?,
-            endpoint: decode_text(parts[4])?,
-            max_attempts: number(parts[5], "max attempts")?,
-            base_delay_seconds: number(parts[6], "base delay")?,
-            active: match parts[7] {
-                "1" => true,
-                "0" => false,
-                value => {
-                    return Err(HarborError::Journal(format!(
-                        "invalid route active flag: {value}"
-                    )));
-                }
-            },
-        })),
+        Some("R") if parts.len() == 8 || parts.len() == 12 => {
+            decode_route(&parts).map(Record::Route)
+        }
         Some("E") if parts.len() == 7 => Ok(Record::Event(WebhookEvent {
             id: decode_text(parts[1])?,
             tenant: decode_text(parts[2])?,
@@ -279,6 +271,46 @@ fn decode_record(line: &str) -> Result<Record, HarborError> {
         ))),
         None => Err(HarborError::Journal("empty record".into())),
     }
+}
+
+fn decode_route(parts: &[&str]) -> Result<Route, HarborError> {
+    Ok(Route {
+        id: decode_text(parts[1])?,
+        tenant: decode_text(parts[2])?,
+        topic_pattern: decode_text(parts[3])?,
+        endpoint: decode_text(parts[4])?,
+        max_attempts: number(parts[5], "max attempts")?,
+        base_delay_seconds: number(parts[6], "base delay")?,
+        active: match parts[7] {
+            "1" => true,
+            "0" => false,
+            value => {
+                return Err(HarborError::Journal(format!(
+                    "invalid route active flag: {value}"
+                )));
+            }
+        },
+        failure_threshold: if parts.len() == 8 {
+            3
+        } else {
+            number(parts[8], "failure threshold")?
+        },
+        cooldown_seconds: if parts.len() == 8 {
+            60
+        } else {
+            number(parts[9], "cooldown seconds")?
+        },
+        consecutive_failures: if parts.len() == 8 {
+            0
+        } else {
+            number(parts[10], "consecutive failures")?
+        },
+        circuit_open_until: if parts.len() == 8 || parts[11] == "-" {
+            None
+        } else {
+            Some(number(parts[11], "circuit open until")?)
+        },
+    })
 }
 
 fn number<T>(value: &str, name: &str) -> Result<T, HarborError>

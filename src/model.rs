@@ -52,6 +52,10 @@ pub struct Route {
     pub max_attempts: u16,
     pub base_delay_seconds: u64,
     pub active: bool,
+    pub failure_threshold: u16,
+    pub cooldown_seconds: u64,
+    pub consecutive_failures: u16,
+    pub circuit_open_until: Option<u64>,
 }
 
 impl Route {
@@ -99,6 +103,10 @@ impl Route {
             max_attempts,
             base_delay_seconds,
             active: true,
+            failure_threshold: 3,
+            cooldown_seconds: 60,
+            consecutive_failures: 0,
+            circuit_open_until: None,
         })
     }
 
@@ -114,6 +122,22 @@ impl Route {
             normalized_topic == self.topic_pattern
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CircuitState {
+    Closed,
+    Open { until: u64 },
+    HalfOpen,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RouteCircuitHealth {
+    pub route_id: String,
+    pub state: CircuitState,
+    pub consecutive_failures: u16,
+    pub failure_threshold: u16,
+    pub cooldown_seconds: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
