@@ -4,8 +4,9 @@ use std::path::Path;
 use crate::journal::{FileJournal, Record};
 use crate::model::{
     AttemptHistorySummary, AttemptOutcome, AttemptResult, BackfillRequest, BackfillResult,
-    CircuitState, Delivery, DeliveryAttempt, DeliveryState, HarborError, HarborSummary,
-    IngestResult, Route, RouteCircuitHealth, WebhookEvent, WebhookInput,
+    CircuitState, Delivery, DeliveryAttempt, DeliveryState, EndpointUpdateMode,
+    EndpointUpdateResult, HarborError, HarborSummary, IngestResult, Route, RouteCircuitHealth,
+    WebhookEvent, WebhookInput,
 };
 
 pub struct SignalHarbor {
@@ -106,6 +107,78 @@ impl SignalHarbor {
     #[must_use]
     pub fn routes(&self) -> Vec<Route> {
         self.routes.values().cloned().collect()
+    }
+
+    /// Rotates a route endpoint and optionally migrates safe pending work in one journal batch.
+    ///
+    /// Future-only rotation preserves every existing delivery snapshot. Migration updates only
+    /// pending deliveries that have never been attempted and do not have a live or expired lease;
+    /// attempted, leased, successful, and dead-letter deliveries retain their original endpoint.
+    /// The route and all migrated deliveries are journaled before in-memory state changes.
+    ///
+    /// # Errors
+    ///
+    /// Returns validation for an unsupported endpoint, not-found for an unknown route, or a
+    /// journal error without exposing a partial rotation.
+    pub fn update_route_endpoint(
+        &mut self,
+        route_id: &str,
+        new_endpoint: &str,
+        mode: EndpointUpdateMode,
+    ) -> Result<EndpointUpdateResult, HarborError> {
+        let new_endpoint = crate::model::validate_endpoint(new_endpoint)?;
+        let mut route = self
+            .routes
+            .get(route_id)
+            .cloned()
+            .ok_or_else(|| HarborError::NotFound(format!("route {route_id}")))?;
+
+        let mut migrated = Vec::new();
+        let mut retained_delivery_ids = Vec::new();
+        for delivery in self
+            .deliveries
+            .values()
+            .filter(|delivery| delivery.route_id == route_id)
+        {
+            let eligible = mode == EndpointUpdateMode::MigrateUnattempted
+                && delivery.state == DeliveryState::Pending
+                && delivery.attempts == 0
+                && delivery.lease_owner.is_none()
+                && delivery.lease_expires_at.is_none();
+            if eligible {
+                let mut updated = delivery.clone();
+                updated.endpoint.clone_from(&new_endpoint);
+                migrated.push(updated);
+            } else {
+                retained_delivery_ids.push(delivery.id.clone());
+            }
+        }
+
+        if route.endpoint == new_endpoint && migrated.is_empty() {
+            return Ok(EndpointUpdateResult {
+                route,
+                migrated_delivery_ids: Vec::new(),
+                retained_delivery_ids,
+            });
+        }
+        route.endpoint = new_endpoint;
+        let mut records = vec![Record::Route(route.clone())];
+        records.extend(migrated.iter().cloned().map(Record::Delivery));
+        self.journal.append_batch(&records)?;
+
+        self.routes.insert(route.id.clone(), route.clone());
+        let migrated_delivery_ids = migrated
+            .iter()
+            .map(|delivery| delivery.id.clone())
+            .collect::<Vec<_>>();
+        for delivery in migrated {
+            self.deliveries.insert(delivery.id.clone(), delivery);
+        }
+        Ok(EndpointUpdateResult {
+            route,
+            migrated_delivery_ids,
+            retained_delivery_ids,
+        })
     }
 
     /// Configures failure isolation for a route and resets its current circuit state.

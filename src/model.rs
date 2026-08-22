@@ -43,6 +43,16 @@ pub(crate) fn required(value: &str, field: &str, maximum: usize) -> Result<Strin
     Ok(normalized)
 }
 
+pub(crate) fn validate_endpoint(value: &str) -> Result<String, HarborError> {
+    let normalized = required(value, "endpoint", 2_000)?;
+    if !(normalized.starts_with("https://") || normalized.starts_with("http://")) {
+        return Err(HarborError::Validation(
+            "endpoint must start with http:// or https://".into(),
+        ));
+    }
+    Ok(normalized)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Route {
     pub id: String,
@@ -80,11 +90,6 @@ impl Route {
                 "topic pattern supports only a trailing .* wildcard".into(),
             ));
         }
-        if !(endpoint.starts_with("https://") || endpoint.starts_with("http://")) {
-            return Err(HarborError::Validation(
-                "endpoint must start with http:// or https://".into(),
-            ));
-        }
         if !(1..=20).contains(&max_attempts) {
             return Err(HarborError::Validation(
                 "max_attempts must be from 1 through 20".into(),
@@ -99,7 +104,7 @@ impl Route {
             id: required(id, "route id", 80)?,
             tenant: required(tenant, "tenant", 80)?.to_ascii_lowercase(),
             topic_pattern: pattern,
-            endpoint: required(endpoint, "endpoint", 2_000)?,
+            endpoint: validate_endpoint(endpoint)?,
             max_attempts,
             base_delay_seconds,
             active: true,
@@ -344,6 +349,19 @@ pub struct BackfillResult {
     pub already_routed: usize,
     pub created_delivery_ids: Vec<String>,
     pub truncated: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EndpointUpdateMode {
+    FutureOnly,
+    MigrateUnattempted,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EndpointUpdateResult {
+    pub route: Route,
+    pub migrated_delivery_ids: Vec<String>,
+    pub retained_delivery_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
