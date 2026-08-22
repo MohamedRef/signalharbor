@@ -2,7 +2,7 @@
 name = "signalharbor"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.89"
+rust-version = "1.92"
 description = "Durable webhook ingestion, deduplication, retry, and routing"
 
 [dependencies]
