@@ -32,6 +32,11 @@ encoding. A malformed journal fails closed and identifies its line number.
   snapshot, including worker, transport or HTTP outcome, retry schedule, and
   terminal state. Histories survive redrive and restart, and summaries expose
   retry, success, dead-letter, transport-failure, and time-bound counts.
+- Each route has a configurable consecutive-failure threshold and cooldown.
+  Retryable HTTP and transport failures open only that route's circuit; its due
+  work remains durable but unavailable to workers until the cooldown expires.
+  A successful half-open probe closes the circuit, a failed probe restarts the
+  cooldown, and both failure counts and open deadlines survive process restart.
 
 ```rust
 use signalharbor::{Route, SignalHarbor, WebhookInput};
