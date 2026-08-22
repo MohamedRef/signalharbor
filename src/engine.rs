@@ -3,9 +3,9 @@ use std::path::Path;
 
 use crate::journal::{FileJournal, Record};
 use crate::model::{
-    AttemptHistorySummary, AttemptOutcome, AttemptResult, CircuitState, Delivery, DeliveryAttempt,
-    DeliveryState, HarborError, HarborSummary, IngestResult, Route, RouteCircuitHealth,
-    WebhookEvent, WebhookInput,
+    AttemptHistorySummary, AttemptOutcome, AttemptResult, BackfillRequest, BackfillResult,
+    CircuitState, Delivery, DeliveryAttempt, DeliveryState, HarborError, HarborSummary,
+    IngestResult, Route, RouteCircuitHealth, WebhookEvent, WebhookInput,
 };
 
 pub struct SignalHarbor {
@@ -251,6 +251,105 @@ impl SignalHarbor {
             event,
             duplicate: false,
             delivery_ids,
+        })
+    }
+
+    /// Creates deliveries for historical events that match a route but were not routed earlier.
+    ///
+    /// Matching is deterministic by received time and event id. The complete delivery batch is
+    /// journaled before in-memory indexes advance, so a persistence error exposes no partial work.
+    /// Repeating the same request is idempotent because existing event-route pairs are skipped.
+    ///
+    /// # Errors
+    ///
+    /// Returns not-found for an unknown route, conflict for an inactive route or exhausted id
+    /// sequence, and a journal error when the batch cannot be persisted.
+    pub fn backfill_route(
+        &mut self,
+        request: &BackfillRequest,
+    ) -> Result<BackfillResult, HarborError> {
+        let route = self
+            .routes
+            .get(&request.route_id)
+            .cloned()
+            .ok_or_else(|| HarborError::NotFound(format!("route {}", request.route_id)))?;
+        if !route.active {
+            return Err(HarborError::Conflict(format!(
+                "route {} is inactive",
+                request.route_id
+            )));
+        }
+
+        let existing = self
+            .deliveries
+            .values()
+            .filter(|delivery| delivery.route_id == route.id)
+            .map(|delivery| delivery.event_id.as_str())
+            .collect::<std::collections::HashSet<_>>();
+        let mut matched = self
+            .events
+            .values()
+            .filter(|event| {
+                event.received_at >= request.received_from
+                    && event.received_at <= request.received_through
+                    && route.matches(&event.tenant, &event.topic)
+            })
+            .collect::<Vec<_>>();
+        matched.sort_by(|left, right| {
+            left.received_at
+                .cmp(&right.received_at)
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        let already_routed = matched
+            .iter()
+            .filter(|event| existing.contains(event.id.as_str()))
+            .count();
+        let missing = matched
+            .iter()
+            .filter(|event| !existing.contains(event.id.as_str()))
+            .collect::<Vec<_>>();
+        let truncated = missing.len() > request.maximum_deliveries;
+
+        let mut next_sequence = self.delivery_sequence;
+        let mut deliveries = Vec::with_capacity(missing.len().min(request.maximum_deliveries));
+        for event in missing.into_iter().take(request.maximum_deliveries) {
+            next_sequence = next_sequence.checked_add(1).ok_or_else(|| {
+                HarborError::Conflict("delivery identifier sequence is exhausted".into())
+            })?;
+            deliveries.push(Delivery {
+                id: format!("del-{next_sequence:012}"),
+                event_id: event.id.clone(),
+                route_id: route.id.clone(),
+                endpoint: route.endpoint.clone(),
+                state: DeliveryState::Pending,
+                attempts: 0,
+                next_attempt_at: request.due_at,
+                last_error: None,
+                lease_owner: None,
+                lease_expires_at: None,
+            });
+        }
+
+        let records = deliveries
+            .iter()
+            .cloned()
+            .map(Record::Delivery)
+            .collect::<Vec<_>>();
+        self.journal.append_batch(&records)?;
+        self.delivery_sequence = next_sequence;
+        let created_delivery_ids = deliveries
+            .iter()
+            .map(|delivery| delivery.id.clone())
+            .collect::<Vec<_>>();
+        for delivery in deliveries {
+            self.deliveries.insert(delivery.id.clone(), delivery);
+        }
+        Ok(BackfillResult {
+            route_id: route.id,
+            matched_events: matched.len(),
+            already_routed,
+            created_delivery_ids,
+            truncated,
         })
     }
 

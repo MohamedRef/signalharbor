@@ -295,6 +295,58 @@ pub struct IngestResult {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BackfillRequest {
+    pub route_id: String,
+    pub received_from: u64,
+    pub received_through: u64,
+    pub due_at: u64,
+    pub maximum_deliveries: usize,
+}
+
+impl BackfillRequest {
+    /// Creates a bounded historical routing request for one route.
+    ///
+    /// # Errors
+    ///
+    /// Returns validation errors for a missing route, inverted time window,
+    /// or a delivery limit outside 1 through 10,000.
+    pub fn new(
+        route_id: &str,
+        received_from: u64,
+        received_through: u64,
+        due_at: u64,
+        maximum_deliveries: usize,
+    ) -> Result<Self, HarborError> {
+        if received_from > received_through {
+            return Err(HarborError::Validation(
+                "backfill received window is inverted".into(),
+            ));
+        }
+        if !(1..=10_000).contains(&maximum_deliveries) {
+            return Err(HarborError::Validation(
+                "maximum_deliveries must be from 1 through 10000".into(),
+            ));
+        }
+        Ok(Self {
+            route_id: required(route_id, "route id", 80)?,
+            received_from,
+            received_through,
+            due_at,
+            maximum_deliveries,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BackfillResult {
+    pub route_id: String,
+    pub matched_events: usize,
+    pub already_routed: usize,
+    pub created_delivery_ids: Vec<String>,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AttemptResult {
     pub delivery: Delivery,
     pub retried: bool,
