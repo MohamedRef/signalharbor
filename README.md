@@ -28,6 +28,9 @@ encoding. A malformed journal fails closed and identifies its line number.
 - Workers can atomically claim due deliveries with durable, expiring leases.
   Only the lease owner can report the attempt while it is live; after expiry,
   another worker can recover the delivery without manual journal repair.
+- Workers can relinquish a live claim without manufacturing an attempt. A
+  release may defer work for at most one day, clears ownership durably, and
+  returns the delivery to the deterministic due queue.
 - Every delivery attempt is journaled atomically with its resulting delivery
   snapshot, including worker, transport or HTTP outcome, retry schedule, and
   terminal state. Histories survive redrive and restart, and summaries expose
