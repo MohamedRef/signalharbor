@@ -582,6 +582,57 @@ impl SignalHarbor {
         Ok(claimed)
     }
 
+    /// Relinquishes a live claim without recording a delivery attempt.
+    ///
+    /// A worker can defer the pending delivery while shutting down or applying
+    /// backpressure. Ownership, lease lifetime, and the bounded defer time are
+    /// checked before the replacement snapshot is journaled. In-memory state is
+    /// changed only after the durable append succeeds.
+    ///
+    /// # Errors
+    ///
+    /// Returns validation for an invalid worker or defer time, conflict when the
+    /// worker does not own a live lease, not-found for an unknown delivery, or a
+    /// journal error without exposing a partial release.
+    pub fn release_claim(
+        &mut self,
+        delivery_id: &str,
+        worker: &str,
+        released_at: u64,
+        next_attempt_at: u64,
+    ) -> Result<Delivery, HarborError> {
+        let worker = crate::model::required(worker, "worker", 120)?;
+        if next_attempt_at < released_at || next_attempt_at > released_at.saturating_add(86_400) {
+            return Err(HarborError::Validation(
+                "released claim must be due from now through 86400 seconds".into(),
+            ));
+        }
+        let current = self.delivery(delivery_id)?;
+        if current.state != DeliveryState::Pending {
+            return Err(HarborError::Conflict(format!(
+                "delivery {delivery_id} is already terminal"
+            )));
+        }
+        if current.lease_owner.as_deref() != Some(&worker)
+            || current
+                .lease_expires_at
+                .is_none_or(|expires_at| expires_at <= released_at)
+        {
+            return Err(HarborError::Conflict(format!(
+                "worker {worker} does not own a live lease for delivery {delivery_id}"
+            )));
+        }
+        let updated = Delivery {
+            next_attempt_at,
+            lease_owner: None,
+            lease_expires_at: None,
+            ..current
+        };
+        self.journal.append(&Record::Delivery(updated.clone()))?;
+        self.deliveries.insert(updated.id.clone(), updated.clone());
+        Ok(updated)
+    }
+
     /// Records an attempt only when the caller owns a live delivery lease.
     ///
     /// # Errors
