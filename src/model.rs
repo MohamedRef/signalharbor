@@ -202,6 +202,7 @@ pub enum DeliveryState {
     Pending,
     Succeeded,
     DeadLetter,
+    Cancelled,
 }
 
 impl DeliveryState {
@@ -210,6 +211,7 @@ impl DeliveryState {
             Self::Pending => "pending",
             Self::Succeeded => "succeeded",
             Self::DeadLetter => "dead",
+            Self::Cancelled => "cancelled",
         }
     }
 
@@ -218,6 +220,7 @@ impl DeliveryState {
             "pending" => Ok(Self::Pending),
             "succeeded" => Ok(Self::Succeeded),
             "dead" => Ok(Self::DeadLetter),
+            "cancelled" => Ok(Self::Cancelled),
             other => Err(HarborError::Journal(format!(
                 "unknown delivery state: {other}"
             ))),
@@ -278,6 +281,15 @@ pub struct DeliveryAttempt {
     pub retried: bool,
     pub next_attempt_at: Option<u64>,
     pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeliveryCancellation {
+    pub id: String,
+    pub delivery_id: String,
+    pub actor: String,
+    pub reason: String,
+    pub cancelled_at: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -386,4 +398,5 @@ pub struct HarborSummary {
     pub pending: usize,
     pub succeeded: usize,
     pub dead_letter: usize,
+    pub cancelled: usize,
 }

@@ -4,9 +4,9 @@ use std::path::Path;
 use crate::journal::{FileJournal, Record};
 use crate::model::{
     AttemptHistorySummary, AttemptOutcome, AttemptResult, BackfillRequest, BackfillResult,
-    BulkRedriveResult, CircuitState, Delivery, DeliveryAttempt, DeliveryState, EndpointUpdateMode,
-    EndpointUpdateResult, HarborError, HarborSummary, IngestResult, Route, RouteCircuitHealth,
-    WebhookEvent, WebhookInput,
+    BulkRedriveResult, CircuitState, Delivery, DeliveryAttempt, DeliveryCancellation,
+    DeliveryState, EndpointUpdateMode, EndpointUpdateResult, HarborError, HarborSummary,
+    IngestResult, Route, RouteCircuitHealth, WebhookEvent, WebhookInput,
 };
 
 pub struct SignalHarbor {
@@ -15,6 +15,7 @@ pub struct SignalHarbor {
     events: BTreeMap<String, WebhookEvent>,
     deliveries: BTreeMap<String, Delivery>,
     attempts: BTreeMap<String, Vec<DeliveryAttempt>>,
+    cancellations: BTreeMap<String, DeliveryCancellation>,
     dedupe: HashMap<(String, String), String>,
     event_sequence: u64,
     delivery_sequence: u64,
@@ -36,6 +37,7 @@ impl SignalHarbor {
             events: BTreeMap::new(),
             deliveries: BTreeMap::new(),
             attempts: BTreeMap::new(),
+            cancellations: BTreeMap::new(),
             dedupe: HashMap::new(),
             event_sequence: 0,
             delivery_sequence: 0,
@@ -58,6 +60,11 @@ impl SignalHarbor {
                         .entry(attempt.delivery_id.clone())
                         .or_default()
                         .push(attempt);
+                }
+                Record::Cancellation(cancellation) => {
+                    harbor
+                        .cancellations
+                        .insert(cancellation.delivery_id.clone(), cancellation);
                 }
             }
         }
@@ -448,6 +455,82 @@ impl SignalHarbor {
             .get(delivery_id)
             .cloned()
             .ok_or_else(|| HarborError::NotFound(format!("delivery {delivery_id}")))
+    }
+
+    /// Cancels pending delivery work while retaining a durable operator record.
+    ///
+    /// A delivery with a live worker lease cannot be cancelled. Expired claims
+    /// are cleared atomically with the terminal snapshot and cancellation
+    /// metadata, so restart never exposes a cancelled delivery without its
+    /// accountable reason.
+    ///
+    /// # Errors
+    ///
+    /// Returns not-found for an unknown delivery, conflict for terminal or
+    /// actively leased work, validation for missing operator context, or a
+    /// journal error without changing in-memory state.
+    pub fn cancel_delivery(
+        &mut self,
+        delivery_id: &str,
+        actor: &str,
+        reason: &str,
+        cancelled_at: u64,
+    ) -> Result<DeliveryCancellation, HarborError> {
+        let actor = crate::model::required(actor, "cancellation actor", 120)?;
+        let reason = crate::model::required(reason, "cancellation reason", 1_000)?;
+        let current = self.delivery(delivery_id)?;
+        if current.state != DeliveryState::Pending {
+            return Err(HarborError::Conflict(format!(
+                "delivery {delivery_id} is already terminal"
+            )));
+        }
+        if current.leased(cancelled_at) {
+            return Err(HarborError::Conflict(format!(
+                "delivery {delivery_id} has an active worker lease"
+            )));
+        }
+        if self.cancellations.contains_key(delivery_id) {
+            return Err(HarborError::Journal(format!(
+                "delivery {delivery_id} already has cancellation metadata"
+            )));
+        }
+        let updated = Delivery {
+            state: DeliveryState::Cancelled,
+            lease_owner: None,
+            lease_expires_at: None,
+            ..current
+        };
+        let cancellation = DeliveryCancellation {
+            id: format!("cancel-{delivery_id}"),
+            delivery_id: delivery_id.to_owned(),
+            actor,
+            reason,
+            cancelled_at,
+        };
+        self.journal.append_batch(&[
+            Record::Delivery(updated.clone()),
+            Record::Cancellation(cancellation.clone()),
+        ])?;
+        self.deliveries.insert(updated.id.clone(), updated);
+        self.cancellations
+            .insert(delivery_id.to_owned(), cancellation.clone());
+        Ok(cancellation)
+    }
+
+    /// Returns the durable cancellation metadata for one delivery.
+    ///
+    /// # Errors
+    ///
+    /// Returns not-found when the delivery exists but has not been cancelled,
+    /// or when the delivery id is unknown.
+    pub fn cancellation(&self, delivery_id: &str) -> Result<DeliveryCancellation, HarborError> {
+        if !self.deliveries.contains_key(delivery_id) {
+            return Err(HarborError::NotFound(format!("delivery {delivery_id}")));
+        }
+        self.cancellations
+            .get(delivery_id)
+            .cloned()
+            .ok_or_else(|| HarborError::NotFound(format!("cancellation for {delivery_id}")))
     }
 
     /// Returns the immutable, durable attempt history for one delivery.
@@ -907,6 +990,11 @@ impl SignalHarbor {
                 .values()
                 .filter(|row| row.state == DeliveryState::DeadLetter)
                 .count(),
+            cancelled: self
+                .deliveries
+                .values()
+                .filter(|row| row.state == DeliveryState::Cancelled)
+                .count(),
         }
     }
 
@@ -982,6 +1070,7 @@ impl SignalHarbor {
                 )));
             }
         }
+        self.validate_cancellations()?;
         for route in self.routes.values() {
             if !(1..=100).contains(&route.failure_threshold) {
                 return Err(HarborError::Journal(format!(
@@ -1031,6 +1120,37 @@ impl SignalHarbor {
         self.event_sequence = self.events.len() as u64;
         self.delivery_sequence = self.deliveries.len() as u64;
         self.attempt_sequence = latest_attempt_sequence;
+        Ok(())
+    }
+
+    fn validate_cancellations(&self) -> Result<(), HarborError> {
+        for delivery in self.deliveries.values() {
+            if delivery.state == DeliveryState::Cancelled
+                && !self.cancellations.contains_key(&delivery.id)
+            {
+                return Err(HarborError::Journal(format!(
+                    "cancelled delivery {} is missing cancellation metadata",
+                    delivery.id
+                )));
+            }
+        }
+        for cancellation in self.cancellations.values() {
+            let delivery = self
+                .deliveries
+                .get(&cancellation.delivery_id)
+                .ok_or_else(|| {
+                    HarborError::Journal(format!(
+                        "cancellation {} references missing delivery {}",
+                        cancellation.id, cancellation.delivery_id
+                    ))
+                })?;
+            if delivery.state != DeliveryState::Cancelled {
+                return Err(HarborError::Journal(format!(
+                    "cancellation {} references non-cancelled delivery {}",
+                    cancellation.id, cancellation.delivery_id
+                )));
+            }
+        }
         Ok(())
     }
 }

@@ -5,7 +5,7 @@ mod model;
 pub use engine::SignalHarbor;
 pub use model::{
     AttemptHistorySummary, AttemptOutcome, AttemptResult, BackfillRequest, BackfillResult,
-    BulkRedriveResult, CircuitState, Delivery, DeliveryAttempt, DeliveryState, EndpointUpdateMode,
-    EndpointUpdateResult, HarborError, HarborSummary, IngestResult, Route, RouteCircuitHealth,
-    WebhookEvent, WebhookInput,
+    BulkRedriveResult, CircuitState, Delivery, DeliveryAttempt, DeliveryCancellation,
+    DeliveryState, EndpointUpdateMode, EndpointUpdateResult, HarborError, HarborSummary,
+    IngestResult, Route, RouteCircuitHealth, WebhookEvent, WebhookInput,
 };

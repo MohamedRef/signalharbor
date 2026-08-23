@@ -3,7 +3,8 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 
 use crate::model::{
-    AttemptOutcome, Delivery, DeliveryAttempt, DeliveryState, HarborError, Route, WebhookEvent,
+    AttemptOutcome, Delivery, DeliveryAttempt, DeliveryCancellation, DeliveryState, HarborError,
+    Route, WebhookEvent,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -12,6 +13,7 @@ pub(crate) enum Record {
     Event(WebhookEvent),
     Delivery(Delivery),
     Attempt(DeliveryAttempt),
+    Cancellation(DeliveryCancellation),
 }
 
 #[derive(Debug, Clone)]
@@ -184,6 +186,15 @@ fn encode_record(record: &Record) -> String {
             ]
             .join("|")
         }
+        Record::Cancellation(cancellation) => [
+            "C".to_owned(),
+            encode_text(&cancellation.id),
+            encode_text(&cancellation.delivery_id),
+            encode_text(&cancellation.actor),
+            encode_text(&cancellation.reason),
+            cancellation.cancelled_at.to_string(),
+        ]
+        .join("|"),
     }
 }
 
@@ -265,6 +276,13 @@ fn decode_record(line: &str) -> Result<Record, HarborError> {
             } else {
                 Some(decode_text(parts[12])?)
             },
+        })),
+        Some("C") if parts.len() == 6 => Ok(Record::Cancellation(DeliveryCancellation {
+            id: decode_text(parts[1])?,
+            delivery_id: decode_text(parts[2])?,
+            actor: decode_text(parts[3])?,
+            reason: decode_text(parts[4])?,
+            cancelled_at: number(parts[5], "cancelled_at")?,
         })),
         Some(kind) => Err(HarborError::Journal(format!(
             "unknown record or field count: {kind}"

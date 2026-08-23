@@ -74,6 +74,10 @@ assert!(!result.duplicate);
 # Ok::<(), signalharbor::HarborError>(())
 ```
 
+Operators can cancel pending deliveries with a durable reason. Active leases prevent cancellation,
+expired claims are cleared atomically, cancelled work leaves the due queue, and the accountable
+cancellation record is verified during journal replay.
+
 ## Verification
 
 The project has no third-party runtime dependencies. Rust 1.92.0, Rustfmt, and
