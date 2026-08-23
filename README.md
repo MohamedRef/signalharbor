@@ -23,6 +23,9 @@ encoding. A malformed journal fails closed and identifies its line number.
 - A route controls its maximum attempts and base delay. Route deactivation
   stops new deliveries without discarding already journaled work.
 - Dead letters can be redriven only while their route is active.
+- Operators can redrive a bounded route-level dead-letter batch in stable
+  delivery order. The batch is one journal transaction, preserves attempt
+  history, and reports truncation plus remaining dead letters.
 - Due queues and summaries are deterministic, making worker behavior easy to
   test and monitor.
 - Workers can atomically claim due deliveries with durable, expiring leases.
