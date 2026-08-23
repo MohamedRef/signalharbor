@@ -4,7 +4,7 @@ use std::path::Path;
 use crate::journal::{FileJournal, Record};
 use crate::model::{
     AttemptHistorySummary, AttemptOutcome, AttemptResult, BackfillRequest, BackfillResult,
-    CircuitState, Delivery, DeliveryAttempt, DeliveryState, EndpointUpdateMode,
+    BulkRedriveResult, CircuitState, Delivery, DeliveryAttempt, DeliveryState, EndpointUpdateMode,
     EndpointUpdateResult, HarborError, HarborSummary, IngestResult, Route, RouteCircuitHealth,
     WebhookEvent, WebhookInput,
 };
@@ -799,6 +799,83 @@ impl SignalHarbor {
         self.journal.append(&Record::Delivery(updated.clone()))?;
         self.deliveries.insert(updated.id.clone(), updated.clone());
         Ok(updated)
+    }
+
+    /// Resets a bounded, deterministic batch of one route's dead letters.
+    ///
+    /// Delivery identifiers define stable selection order. The complete batch
+    /// is journaled as one transaction before any in-memory delivery changes,
+    /// preventing a restart from exposing a partially redriven operator batch.
+    /// Existing attempt history is retained while the delivery cycle resets.
+    ///
+    /// # Errors
+    ///
+    /// Returns validation for a limit outside 1 through 1,000, not-found for an
+    /// unknown route, conflict for an inactive route, or a journal error without
+    /// mutating the visible batch.
+    pub fn redrive_route_dead_letters(
+        &mut self,
+        route_id: &str,
+        due_at: u64,
+        limit: usize,
+    ) -> Result<BulkRedriveResult, HarborError> {
+        if !(1..=1_000).contains(&limit) {
+            return Err(HarborError::Validation(
+                "bulk redrive limit must be from 1 through 1000".into(),
+            ));
+        }
+        let route = self
+            .routes
+            .get(route_id)
+            .ok_or_else(|| HarborError::NotFound(format!("route {route_id}")))?;
+        if !route.active {
+            return Err(HarborError::Conflict(format!(
+                "cannot redrive while route {route_id} is inactive"
+            )));
+        }
+        let mut candidates = self
+            .deliveries
+            .values()
+            .filter(|delivery| {
+                delivery.route_id == route_id && delivery.state == DeliveryState::DeadLetter
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        candidates.sort_by(|left, right| left.id.cmp(&right.id));
+        let total = candidates.len();
+        candidates.truncate(limit);
+        let updated = candidates
+            .into_iter()
+            .map(|delivery| Delivery {
+                state: DeliveryState::Pending,
+                attempts: 0,
+                next_attempt_at: due_at,
+                last_error: None,
+                lease_owner: None,
+                lease_expires_at: None,
+                ..delivery
+            })
+            .collect::<Vec<_>>();
+        let records = updated
+            .iter()
+            .cloned()
+            .map(Record::Delivery)
+            .collect::<Vec<_>>();
+        self.journal.append_batch(&records)?;
+        let redriven_delivery_ids = updated
+            .iter()
+            .map(|delivery| delivery.id.clone())
+            .collect::<Vec<_>>();
+        for delivery in updated {
+            self.deliveries.insert(delivery.id.clone(), delivery);
+        }
+        let remaining_dead_letters = total.saturating_sub(redriven_delivery_ids.len());
+        Ok(BulkRedriveResult {
+            route_id: route_id.to_owned(),
+            redriven_delivery_ids,
+            remaining_dead_letters,
+            truncated: total > limit,
+        })
     }
 
     #[must_use]

@@ -351,6 +351,14 @@ pub struct BackfillResult {
     pub truncated: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BulkRedriveResult {
+    pub route_id: String,
+    pub redriven_delivery_ids: Vec<String>,
+    pub remaining_dead_letters: usize,
+    pub truncated: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EndpointUpdateMode {
     FutureOnly,
