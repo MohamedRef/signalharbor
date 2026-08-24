@@ -84,6 +84,10 @@ exclude work from both due and claim queues, and expire automatically within sev
 release records the responsible operator, while the full hold history remains available after
 journal replay.
 
+Each route can enforce a durable in-flight lease limit. Claims consume capacity independently per
+route, expired leases restore capacity automatically, and health queries expose live and available
+slots. This prevents one slow receiver from accumulating more concurrent work than it can handle.
+
 ## Verification
 
 The project has no third-party runtime dependencies. Rust 1.92.0, Rustfmt, and

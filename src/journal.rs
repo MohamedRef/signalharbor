@@ -123,6 +123,7 @@ fn encode_record(record: &Record) -> String {
             route
                 .circuit_open_until
                 .map_or_else(|| "-".to_owned(), |value| value.to_string()),
+            route.max_in_flight.to_string(),
         ]
         .join("|"),
         Record::Event(event) => [
@@ -203,7 +204,7 @@ fn encode_record(record: &Record) -> String {
 fn decode_record(line: &str) -> Result<Record, HarborError> {
     let parts = line.split('|').collect::<Vec<_>>();
     match parts.first().copied() {
-        Some("R") if parts.len() == 8 || parts.len() == 12 => {
+        Some("R") if parts.len() == 8 || parts.len() == 12 || parts.len() == 13 => {
             decode_route(&parts).map(Record::Route)
         }
         Some("E") if parts.len() == 7 => Ok(Record::Event(WebhookEvent {
@@ -371,6 +372,11 @@ fn decode_route(parts: &[&str]) -> Result<Route, HarborError> {
             None
         } else {
             Some(number(parts[11], "circuit open until")?)
+        },
+        max_in_flight: if parts.len() < 13 {
+            1_000
+        } else {
+            number(parts[12], "max in flight")?
         },
     })
 }

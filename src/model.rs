@@ -66,6 +66,7 @@ pub struct Route {
     pub cooldown_seconds: u64,
     pub consecutive_failures: u16,
     pub circuit_open_until: Option<u64>,
+    pub max_in_flight: u16,
 }
 
 impl Route {
@@ -112,6 +113,7 @@ impl Route {
             cooldown_seconds: 60,
             consecutive_failures: 0,
             circuit_open_until: None,
+            max_in_flight: 1_000,
         })
     }
 
@@ -143,6 +145,14 @@ pub struct RouteCircuitHealth {
     pub consecutive_failures: u16,
     pub failure_threshold: u16,
     pub cooldown_seconds: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RouteConcurrencyHealth {
+    pub route_id: String,
+    pub max_in_flight: u16,
+    pub leased: usize,
+    pub available: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

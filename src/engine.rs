@@ -6,7 +6,7 @@ use crate::model::{
     AttemptHistorySummary, AttemptOutcome, AttemptResult, BackfillRequest, BackfillResult,
     BulkRedriveResult, CircuitState, Delivery, DeliveryAttempt, DeliveryCancellation, DeliveryHold,
     DeliveryState, EndpointUpdateMode, EndpointUpdateResult, HarborError, HarborSummary,
-    IngestResult, Route, RouteCircuitHealth, WebhookEvent, WebhookInput,
+    IngestResult, Route, RouteCircuitHealth, RouteConcurrencyHealth, WebhookEvent, WebhookInput,
 };
 
 pub struct SignalHarbor {
@@ -227,6 +227,61 @@ impl SignalHarbor {
         self.journal.append(&Record::Route(route.clone()))?;
         self.routes.insert(route.id.clone(), route);
         self.route_circuit_health(route_id, 0)
+    }
+
+    /// Sets a durable upper bound on simultaneous live delivery leases for a route.
+    ///
+    /// # Errors
+    ///
+    /// Returns validation for a limit outside 1 through 1000, not-found for an
+    /// unknown route, or a journal error when the replacement route cannot persist.
+    pub fn configure_route_concurrency(
+        &mut self,
+        route_id: &str,
+        max_in_flight: u16,
+        now: u64,
+    ) -> Result<RouteConcurrencyHealth, HarborError> {
+        if !(1..=1_000).contains(&max_in_flight) {
+            return Err(HarborError::Validation(
+                "max_in_flight must be from 1 through 1000".into(),
+            ));
+        }
+        let mut route = self
+            .routes
+            .get(route_id)
+            .cloned()
+            .ok_or_else(|| HarborError::NotFound(format!("route {route_id}")))?;
+        route.max_in_flight = max_in_flight;
+        self.journal.append(&Record::Route(route.clone()))?;
+        self.routes.insert(route.id.clone(), route);
+        self.route_concurrency_health(route_id, now)
+    }
+
+    /// Reports live leases and remaining concurrency for one route.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HarborError::NotFound`] for an unknown route.
+    pub fn route_concurrency_health(
+        &self,
+        route_id: &str,
+        now: u64,
+    ) -> Result<RouteConcurrencyHealth, HarborError> {
+        let route = self
+            .routes
+            .get(route_id)
+            .ok_or_else(|| HarborError::NotFound(format!("route {route_id}")))?;
+        let leased = self
+            .deliveries
+            .values()
+            .filter(|delivery| delivery.route_id == route_id && delivery.leased(now))
+            .count();
+        Ok(RouteConcurrencyHealth {
+            route_id: route.id.clone(),
+            max_in_flight: route.max_in_flight,
+            leased,
+            available: usize::from(route.max_in_flight).saturating_sub(leased),
+        })
     }
 
     /// Reports whether a route is closed, cooling down, or ready for a probe.
@@ -763,6 +818,29 @@ impl SignalHarbor {
         available.sort_by(|left, right| {
             (left.next_attempt_at, &left.id).cmp(&(right.next_attempt_at, &right.id))
         });
+        let mut capacity = self
+            .routes
+            .values()
+            .map(|route| {
+                let leased = self
+                    .deliveries
+                    .values()
+                    .filter(|delivery| delivery.route_id == route.id && delivery.leased(now))
+                    .count();
+                (
+                    route.id.clone(),
+                    usize::from(route.max_in_flight).saturating_sub(leased),
+                )
+            })
+            .collect::<HashMap<_, _>>();
+        available.retain(|delivery| {
+            let remaining = capacity.entry(delivery.route_id.clone()).or_default();
+            if *remaining == 0 {
+                return false;
+            }
+            *remaining -= 1;
+            true
+        });
         available.truncate(limit);
         let expires_at = now.saturating_add(lease_seconds);
         let claimed = available
@@ -1223,6 +1301,12 @@ impl SignalHarbor {
             if !(1..=86_400).contains(&route.cooldown_seconds) {
                 return Err(HarborError::Journal(format!(
                     "route {} has invalid circuit cooldown",
+                    route.id
+                )));
+            }
+            if !(1..=1_000).contains(&route.max_in_flight) {
+                return Err(HarborError::Journal(format!(
+                    "route {} has invalid concurrency limit",
                     route.id
                 )));
             }

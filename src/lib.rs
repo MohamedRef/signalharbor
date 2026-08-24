@@ -7,5 +7,5 @@ pub use model::{
     AttemptHistorySummary, AttemptOutcome, AttemptResult, BackfillRequest, BackfillResult,
     BulkRedriveResult, CircuitState, Delivery, DeliveryAttempt, DeliveryCancellation, DeliveryHold,
     DeliveryState, EndpointUpdateMode, EndpointUpdateResult, HarborError, HarborSummary,
-    IngestResult, Route, RouteCircuitHealth, WebhookEvent, WebhookInput,
+    IngestResult, Route, RouteCircuitHealth, RouteConcurrencyHealth, WebhookEvent, WebhookInput,
 };
