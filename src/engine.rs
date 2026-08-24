@@ -4,7 +4,7 @@ use std::path::Path;
 use crate::journal::{FileJournal, Record};
 use crate::model::{
     AttemptHistorySummary, AttemptOutcome, AttemptResult, BackfillRequest, BackfillResult,
-    BulkRedriveResult, CircuitState, Delivery, DeliveryAttempt, DeliveryCancellation,
+    BulkRedriveResult, CircuitState, Delivery, DeliveryAttempt, DeliveryCancellation, DeliveryHold,
     DeliveryState, EndpointUpdateMode, EndpointUpdateResult, HarborError, HarborSummary,
     IngestResult, Route, RouteCircuitHealth, WebhookEvent, WebhookInput,
 };
@@ -16,10 +16,12 @@ pub struct SignalHarbor {
     deliveries: BTreeMap<String, Delivery>,
     attempts: BTreeMap<String, Vec<DeliveryAttempt>>,
     cancellations: BTreeMap<String, DeliveryCancellation>,
+    holds: BTreeMap<String, Vec<DeliveryHold>>,
     dedupe: HashMap<(String, String), String>,
     event_sequence: u64,
     delivery_sequence: u64,
     attempt_sequence: u64,
+    hold_sequence: u64,
 }
 
 impl SignalHarbor {
@@ -38,10 +40,12 @@ impl SignalHarbor {
             deliveries: BTreeMap::new(),
             attempts: BTreeMap::new(),
             cancellations: BTreeMap::new(),
+            holds: BTreeMap::new(),
             dedupe: HashMap::new(),
             event_sequence: 0,
             delivery_sequence: 0,
             attempt_sequence: 0,
+            hold_sequence: 0,
         };
         for record in harbor.journal.replay()? {
             match record {
@@ -66,6 +70,7 @@ impl SignalHarbor {
                         .cancellations
                         .insert(cancellation.delivery_id.clone(), cancellation);
                 }
+                Record::Hold(hold) => harbor.upsert_hold(hold),
             }
         }
         harbor.rebuild_indexes()?;
@@ -533,6 +538,114 @@ impl SignalHarbor {
             .ok_or_else(|| HarborError::NotFound(format!("cancellation for {delivery_id}")))
     }
 
+    /// Places a bounded, durable operator hold on pending delivery work.
+    ///
+    /// A live worker lease prevents a hold. An expired lease is cleared in the
+    /// same journal transaction, and the hold automatically stops applying at
+    /// `release_at` even when nobody explicitly releases it.
+    ///
+    /// # Errors
+    ///
+    /// Returns validation for missing context or an invalid interval, conflict
+    /// for terminal, leased, or already-held work, not-found for an unknown
+    /// delivery, or a journal error without changing in-memory state.
+    pub fn hold_delivery(
+        &mut self,
+        delivery_id: &str,
+        actor: &str,
+        reason: &str,
+        held_at: u64,
+        release_at: u64,
+    ) -> Result<DeliveryHold, HarborError> {
+        let actor = crate::model::required(actor, "hold actor", 120)?;
+        let reason = crate::model::required(reason, "hold reason", 1_000)?;
+        if release_at <= held_at || release_at > held_at.saturating_add(604_800) {
+            return Err(HarborError::Validation(
+                "hold release_at must be after held_at and within 7 days".into(),
+            ));
+        }
+        let current = self.delivery(delivery_id)?;
+        if current.state != DeliveryState::Pending {
+            return Err(HarborError::Conflict(format!(
+                "delivery {delivery_id} is already terminal"
+            )));
+        }
+        if current.leased(held_at) {
+            return Err(HarborError::Conflict(format!(
+                "delivery {delivery_id} has an active worker lease"
+            )));
+        }
+        if self.active_hold(delivery_id, held_at).is_some() {
+            return Err(HarborError::Conflict(format!(
+                "delivery {delivery_id} already has an active hold"
+            )));
+        }
+        let sequence = self.hold_sequence.saturating_add(1);
+        let hold = DeliveryHold {
+            id: format!("hold-{sequence}"),
+            sequence,
+            delivery_id: delivery_id.to_owned(),
+            actor,
+            reason,
+            held_at,
+            release_at,
+            released_at: None,
+            released_by: None,
+        };
+        let updated = Delivery {
+            lease_owner: None,
+            lease_expires_at: None,
+            ..current
+        };
+        self.journal.append_batch(&[
+            Record::Delivery(updated.clone()),
+            Record::Hold(hold.clone()),
+        ])?;
+        self.deliveries.insert(updated.id.clone(), updated);
+        self.hold_sequence = sequence;
+        self.upsert_hold(hold.clone());
+        Ok(hold)
+    }
+
+    /// Explicitly releases the currently active hold and preserves accountability.
+    ///
+    /// # Errors
+    ///
+    /// Returns validation for a missing actor, not-found for an unknown
+    /// delivery or active hold, and a journal error without a partial release.
+    pub fn release_delivery_hold(
+        &mut self,
+        delivery_id: &str,
+        actor: &str,
+        released_at: u64,
+    ) -> Result<DeliveryHold, HarborError> {
+        let actor = crate::model::required(actor, "hold release actor", 120)?;
+        if !self.deliveries.contains_key(delivery_id) {
+            return Err(HarborError::NotFound(format!("delivery {delivery_id}")));
+        }
+        let mut hold = self
+            .active_hold(delivery_id, released_at)
+            .cloned()
+            .ok_or_else(|| HarborError::NotFound(format!("active hold for {delivery_id}")))?;
+        hold.released_at = Some(released_at);
+        hold.released_by = Some(actor);
+        self.journal.append(&Record::Hold(hold.clone()))?;
+        self.upsert_hold(hold.clone());
+        Ok(hold)
+    }
+
+    /// Returns every hold for one delivery in durable sequence order.
+    ///
+    /// # Errors
+    ///
+    /// Returns not-found when the delivery does not exist.
+    pub fn hold_history(&self, delivery_id: &str) -> Result<Vec<DeliveryHold>, HarborError> {
+        if !self.deliveries.contains_key(delivery_id) {
+            return Err(HarborError::NotFound(format!("delivery {delivery_id}")));
+        }
+        Ok(self.holds.get(delivery_id).cloned().unwrap_or_default())
+    }
+
     /// Returns the immutable, durable attempt history for one delivery.
     ///
     /// Redriving a dead letter starts a new delivery attempt cycle but does not
@@ -595,7 +708,11 @@ impl SignalHarbor {
         let mut rows = self
             .deliveries
             .values()
-            .filter(|delivery| delivery.due(now) && self.route_available(&delivery.route_id, now))
+            .filter(|delivery| {
+                delivery.due(now)
+                    && !self.delivery_held(&delivery.id, now)
+                    && self.route_available(&delivery.route_id, now)
+            })
             .cloned()
             .collect::<Vec<_>>();
         rows.sort_by(|left, right| {
@@ -636,7 +753,11 @@ impl SignalHarbor {
         let mut available = self
             .deliveries
             .values()
-            .filter(|delivery| delivery.due(now) && self.route_available(&delivery.route_id, now))
+            .filter(|delivery| {
+                delivery.due(now)
+                    && !self.delivery_held(&delivery.id, now)
+                    && self.route_available(&delivery.route_id, now)
+            })
             .cloned()
             .collect::<Vec<_>>();
         available.sort_by(|left, right| {
@@ -1015,6 +1136,26 @@ impl SignalHarbor {
         })
     }
 
+    fn active_hold(&self, delivery_id: &str, now: u64) -> Option<&DeliveryHold> {
+        self.holds
+            .get(delivery_id)
+            .and_then(|holds| holds.iter().rev().find(|hold| hold.active_at(now)))
+    }
+
+    fn delivery_held(&self, delivery_id: &str, now: u64) -> bool {
+        self.active_hold(delivery_id, now).is_some()
+    }
+
+    fn upsert_hold(&mut self, hold: DeliveryHold) {
+        let holds = self.holds.entry(hold.delivery_id.clone()).or_default();
+        if let Some(existing) = holds.iter_mut().find(|existing| existing.id == hold.id) {
+            *existing = hold;
+        } else {
+            holds.push(hold);
+            holds.sort_by_key(|item| item.sequence);
+        }
+    }
+
     fn route_for_attempt(&self, route_id: &str, attempted_at: u64) -> Result<Route, HarborError> {
         let route = self
             .routes
@@ -1071,6 +1212,7 @@ impl SignalHarbor {
             }
         }
         self.validate_cancellations()?;
+        self.validate_holds()?;
         for route in self.routes.values() {
             if !(1..=100).contains(&route.failure_threshold) {
                 return Err(HarborError::Journal(format!(
@@ -1120,6 +1262,12 @@ impl SignalHarbor {
         self.event_sequence = self.events.len() as u64;
         self.delivery_sequence = self.deliveries.len() as u64;
         self.attempt_sequence = latest_attempt_sequence;
+        self.hold_sequence = self
+            .holds
+            .values()
+            .flat_map(|holds| holds.iter().map(|hold| hold.sequence))
+            .max()
+            .unwrap_or(0);
         Ok(())
     }
 
@@ -1149,6 +1297,61 @@ impl SignalHarbor {
                     "cancellation {} references non-cancelled delivery {}",
                     cancellation.id, cancellation.delivery_id
                 )));
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_holds(&self) -> Result<(), HarborError> {
+        let mut sequences = std::collections::BTreeSet::new();
+        for (delivery_id, holds) in &self.holds {
+            if !self.deliveries.contains_key(delivery_id) {
+                return Err(HarborError::Journal(format!(
+                    "hold history references missing delivery {delivery_id}"
+                )));
+            }
+            let mut active_intervals: Vec<(u64, u64)> = Vec::new();
+            for hold in holds {
+                if hold.delivery_id != *delivery_id || hold.sequence == 0 {
+                    return Err(HarborError::Journal(format!(
+                        "hold {} has invalid identity or sequence",
+                        hold.id
+                    )));
+                }
+                if !sequences.insert(hold.sequence) {
+                    return Err(HarborError::Journal(format!(
+                        "duplicate hold sequence {}",
+                        hold.sequence
+                    )));
+                }
+                if hold.release_at <= hold.held_at
+                    || hold.release_at > hold.held_at.saturating_add(604_800)
+                {
+                    return Err(HarborError::Journal(format!(
+                        "hold {} has an invalid interval",
+                        hold.id
+                    )));
+                }
+                if hold.released_at.is_some() != hold.released_by.is_some()
+                    || hold.released_at.is_some_and(|released_at| {
+                        released_at < hold.held_at || released_at >= hold.release_at
+                    })
+                {
+                    return Err(HarborError::Journal(format!(
+                        "hold {} has invalid release metadata",
+                        hold.id
+                    )));
+                }
+                let end = hold.released_at.unwrap_or(hold.release_at);
+                if active_intervals
+                    .iter()
+                    .any(|(start, existing_end)| hold.held_at < *existing_end && *start < end)
+                {
+                    return Err(HarborError::Journal(format!(
+                        "delivery {delivery_id} has overlapping hold intervals"
+                    )));
+                }
+                active_intervals.push((hold.held_at, end));
             }
         }
         Ok(())

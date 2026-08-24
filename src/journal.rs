@@ -3,8 +3,8 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 
 use crate::model::{
-    AttemptOutcome, Delivery, DeliveryAttempt, DeliveryCancellation, DeliveryState, HarborError,
-    Route, WebhookEvent,
+    AttemptOutcome, Delivery, DeliveryAttempt, DeliveryCancellation, DeliveryHold, DeliveryState,
+    HarborError, Route, WebhookEvent,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -14,6 +14,7 @@ pub(crate) enum Record {
     Delivery(Delivery),
     Attempt(DeliveryAttempt),
     Cancellation(DeliveryCancellation),
+    Hold(DeliveryHold),
 }
 
 #[derive(Debug, Clone)]
@@ -195,6 +196,7 @@ fn encode_record(record: &Record) -> String {
             cancellation.cancelled_at.to_string(),
         ]
         .join("|"),
+        Record::Hold(hold) => encode_hold(hold),
     }
 }
 
@@ -284,11 +286,53 @@ fn decode_record(line: &str) -> Result<Record, HarborError> {
             reason: decode_text(parts[4])?,
             cancelled_at: number(parts[5], "cancelled_at")?,
         })),
+        Some("H") if parts.len() == 10 => decode_hold(&parts).map(Record::Hold),
         Some(kind) => Err(HarborError::Journal(format!(
             "unknown record or field count: {kind}"
         ))),
         None => Err(HarborError::Journal("empty record".into())),
     }
+}
+
+fn encode_hold(hold: &DeliveryHold) -> String {
+    [
+        "H".to_owned(),
+        encode_text(&hold.id),
+        hold.sequence.to_string(),
+        encode_text(&hold.delivery_id),
+        encode_text(&hold.actor),
+        encode_text(&hold.reason),
+        hold.held_at.to_string(),
+        hold.release_at.to_string(),
+        hold.released_at
+            .map_or_else(|| "-".to_owned(), |value| value.to_string()),
+        hold.released_by
+            .as_deref()
+            .map_or_else(|| "-".to_owned(), encode_text),
+    ]
+    .join("|")
+}
+
+fn decode_hold(parts: &[&str]) -> Result<DeliveryHold, HarborError> {
+    Ok(DeliveryHold {
+        id: decode_text(parts[1])?,
+        sequence: number(parts[2], "hold sequence")?,
+        delivery_id: decode_text(parts[3])?,
+        actor: decode_text(parts[4])?,
+        reason: decode_text(parts[5])?,
+        held_at: number(parts[6], "held_at")?,
+        release_at: number(parts[7], "hold release_at")?,
+        released_at: if parts[8] == "-" {
+            None
+        } else {
+            Some(number(parts[8], "hold released_at")?)
+        },
+        released_by: if parts[9] == "-" {
+            None
+        } else {
+            Some(decode_text(parts[9])?)
+        },
+    })
 }
 
 fn decode_route(parts: &[&str]) -> Result<Route, HarborError> {

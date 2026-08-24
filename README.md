@@ -78,6 +78,12 @@ Operators can cancel pending deliveries with a durable reason. Active leases pre
 expired claims are cleared atomically, cancelled work leaves the due queue, and the accountable
 cancellation record is verified during journal replay.
 
+Operators can also place a pending delivery on a bounded hold while investigating receiver,
+security, or contractual concerns. Holds reject live leases, clear expired leases atomically,
+exclude work from both due and claim queues, and expire automatically within seven days. Explicit
+release records the responsible operator, while the full hold history remains available after
+journal replay.
+
 ## Verification
 
 The project has no third-party runtime dependencies. Rust 1.92.0, Rustfmt, and

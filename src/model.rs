@@ -292,6 +292,31 @@ pub struct DeliveryCancellation {
     pub cancelled_at: u64,
 }
 
+/// An operator-controlled pause on a pending delivery.
+///
+/// Holds have a bounded automatic expiry so a forgotten intervention cannot
+/// permanently strand work. An explicit release retains who ended the hold
+/// and when; the journal keeps both the original and replacement snapshots.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeliveryHold {
+    pub id: String,
+    pub sequence: u64,
+    pub delivery_id: String,
+    pub actor: String,
+    pub reason: String,
+    pub held_at: u64,
+    pub release_at: u64,
+    pub released_at: Option<u64>,
+    pub released_by: Option<String>,
+}
+
+impl DeliveryHold {
+    #[must_use]
+    pub fn active_at(&self, now: u64) -> bool {
+        self.released_at.is_none() && self.held_at <= now && now < self.release_at
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AttemptHistorySummary {
     pub delivery_id: String,
