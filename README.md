@@ -88,6 +88,11 @@ Each route can enforce a durable in-flight lease limit. Claims consume capacity 
 route, expired leases restore capacity automatically, and health queries expose live and available
 slots. This prevents one slow receiver from accumulating more concurrent work than it can handle.
 
+Planned route maintenance provides bounded, non-overlapping outage windows with scheduler context.
+Due queues, claims, and direct attempts pause only while a window is active, then resume without
+rewriting delivery schedules. Operators can cancel a future or active window with a durable reason;
+ordered maintenance history and all cancellation metadata survive journal replay.
+
 ## Verification
 
 The project has no third-party runtime dependencies. Rust 1.92.0, Rustfmt, and

@@ -155,6 +155,37 @@ pub struct RouteConcurrencyHealth {
     pub available: usize,
 }
 
+/// A planned route outage that temporarily removes work from worker queues.
+///
+/// Windows retain both scheduling and cancellation context so an operator can
+/// distinguish an elapsed outage from one that was deliberately withdrawn.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RouteMaintenance {
+    pub id: String,
+    pub sequence: u64,
+    pub route_id: String,
+    pub starts_at: u64,
+    pub ends_at: u64,
+    pub scheduled_by: String,
+    pub reason: String,
+    pub scheduled_at: u64,
+    pub cancelled_at: Option<u64>,
+    pub cancelled_by: Option<String>,
+    pub cancellation_reason: Option<String>,
+}
+
+impl RouteMaintenance {
+    #[must_use]
+    pub fn active_at(&self, now: u64) -> bool {
+        self.cancelled_at.is_none() && self.starts_at <= now && now < self.ends_at
+    }
+
+    #[must_use]
+    pub fn overlaps(&self, starts_at: u64, ends_at: u64) -> bool {
+        self.cancelled_at.is_none() && starts_at < self.ends_at && self.starts_at < ends_at
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WebhookInput {
     pub tenant: String,

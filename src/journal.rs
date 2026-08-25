@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use crate::model::{
     AttemptOutcome, Delivery, DeliveryAttempt, DeliveryCancellation, DeliveryHold, DeliveryState,
-    HarborError, Route, WebhookEvent,
+    HarborError, Route, RouteMaintenance, WebhookEvent,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -15,6 +15,7 @@ pub(crate) enum Record {
     Attempt(DeliveryAttempt),
     Cancellation(DeliveryCancellation),
     Hold(DeliveryHold),
+    Maintenance(RouteMaintenance),
 }
 
 #[derive(Debug, Clone)]
@@ -198,6 +199,7 @@ fn encode_record(record: &Record) -> String {
         ]
         .join("|"),
         Record::Hold(hold) => encode_hold(hold),
+        Record::Maintenance(maintenance) => encode_maintenance(maintenance),
     }
 }
 
@@ -288,6 +290,7 @@ fn decode_record(line: &str) -> Result<Record, HarborError> {
             cancelled_at: number(parts[5], "cancelled_at")?,
         })),
         Some("H") if parts.len() == 10 => decode_hold(&parts).map(Record::Hold),
+        Some("M") if parts.len() == 12 => decode_maintenance(&parts).map(Record::Maintenance),
         Some(kind) => Err(HarborError::Journal(format!(
             "unknown record or field count: {kind}"
         ))),
@@ -332,6 +335,60 @@ fn decode_hold(parts: &[&str]) -> Result<DeliveryHold, HarborError> {
             None
         } else {
             Some(decode_text(parts[9])?)
+        },
+    })
+}
+
+fn encode_maintenance(maintenance: &RouteMaintenance) -> String {
+    [
+        "M".to_owned(),
+        encode_text(&maintenance.id),
+        maintenance.sequence.to_string(),
+        encode_text(&maintenance.route_id),
+        maintenance.starts_at.to_string(),
+        maintenance.ends_at.to_string(),
+        encode_text(&maintenance.scheduled_by),
+        encode_text(&maintenance.reason),
+        maintenance.scheduled_at.to_string(),
+        maintenance
+            .cancelled_at
+            .map_or_else(|| "-".to_owned(), |value| value.to_string()),
+        maintenance
+            .cancelled_by
+            .as_deref()
+            .map_or_else(|| "-".to_owned(), encode_text),
+        maintenance
+            .cancellation_reason
+            .as_deref()
+            .map_or_else(|| "-".to_owned(), encode_text),
+    ]
+    .join("|")
+}
+
+fn decode_maintenance(parts: &[&str]) -> Result<RouteMaintenance, HarborError> {
+    Ok(RouteMaintenance {
+        id: decode_text(parts[1])?,
+        sequence: number(parts[2], "maintenance sequence")?,
+        route_id: decode_text(parts[3])?,
+        starts_at: number(parts[4], "maintenance start")?,
+        ends_at: number(parts[5], "maintenance end")?,
+        scheduled_by: decode_text(parts[6])?,
+        reason: decode_text(parts[7])?,
+        scheduled_at: number(parts[8], "maintenance scheduled_at")?,
+        cancelled_at: if parts[9] == "-" {
+            None
+        } else {
+            Some(number(parts[9], "maintenance cancelled_at")?)
+        },
+        cancelled_by: if parts[10] == "-" {
+            None
+        } else {
+            Some(decode_text(parts[10])?)
+        },
+        cancellation_reason: if parts[11] == "-" {
+            None
+        } else {
+            Some(decode_text(parts[11])?)
         },
     })
 }

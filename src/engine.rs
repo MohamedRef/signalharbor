@@ -6,7 +6,8 @@ use crate::model::{
     AttemptHistorySummary, AttemptOutcome, AttemptResult, BackfillRequest, BackfillResult,
     BulkRedriveResult, CircuitState, Delivery, DeliveryAttempt, DeliveryCancellation, DeliveryHold,
     DeliveryState, EndpointUpdateMode, EndpointUpdateResult, HarborError, HarborSummary,
-    IngestResult, Route, RouteCircuitHealth, RouteConcurrencyHealth, WebhookEvent, WebhookInput,
+    IngestResult, Route, RouteCircuitHealth, RouteConcurrencyHealth, RouteMaintenance,
+    WebhookEvent, WebhookInput,
 };
 
 pub struct SignalHarbor {
@@ -17,11 +18,13 @@ pub struct SignalHarbor {
     attempts: BTreeMap<String, Vec<DeliveryAttempt>>,
     cancellations: BTreeMap<String, DeliveryCancellation>,
     holds: BTreeMap<String, Vec<DeliveryHold>>,
+    maintenance: BTreeMap<String, Vec<RouteMaintenance>>,
     dedupe: HashMap<(String, String), String>,
     event_sequence: u64,
     delivery_sequence: u64,
     attempt_sequence: u64,
     hold_sequence: u64,
+    maintenance_sequence: u64,
 }
 
 impl SignalHarbor {
@@ -41,11 +44,13 @@ impl SignalHarbor {
             attempts: BTreeMap::new(),
             cancellations: BTreeMap::new(),
             holds: BTreeMap::new(),
+            maintenance: BTreeMap::new(),
             dedupe: HashMap::new(),
             event_sequence: 0,
             delivery_sequence: 0,
             attempt_sequence: 0,
             hold_sequence: 0,
+            maintenance_sequence: 0,
         };
         for record in harbor.journal.replay()? {
             match record {
@@ -71,6 +76,7 @@ impl SignalHarbor {
                         .insert(cancellation.delivery_id.clone(), cancellation);
                 }
                 Record::Hold(hold) => harbor.upsert_hold(hold),
+                Record::Maintenance(maintenance) => harbor.upsert_maintenance(maintenance),
             }
         }
         harbor.rebuild_indexes()?;
@@ -282,6 +288,139 @@ impl SignalHarbor {
             leased,
             available: usize::from(route.max_in_flight).saturating_sub(leased),
         })
+    }
+
+    /// Schedules a bounded maintenance window that pauses claims for one route.
+    ///
+    /// The window may start immediately or within 30 days, can last at most one
+    /// day, and cannot overlap another uncancelled window for the same route.
+    /// Existing delivery state is unchanged; due work becomes available again
+    /// automatically when the window ends.
+    ///
+    /// # Errors
+    ///
+    /// Returns validation for bad timing or operator context, conflict for an
+    /// overlapping window, not-found for an unknown route, or a journal error
+    /// without exposing an unpersisted schedule.
+    pub fn schedule_route_maintenance(
+        &mut self,
+        route_id: &str,
+        starts_at: u64,
+        ends_at: u64,
+        actor: &str,
+        reason: &str,
+        scheduled_at: u64,
+    ) -> Result<RouteMaintenance, HarborError> {
+        if !self.routes.contains_key(route_id) {
+            return Err(HarborError::NotFound(format!("route {route_id}")));
+        }
+        let actor = crate::model::required(actor, "maintenance scheduler", 120)?;
+        let reason = crate::model::required(reason, "maintenance reason", 1_000)?;
+        if starts_at < scheduled_at
+            || ends_at <= starts_at
+            || ends_at > starts_at.saturating_add(86_400)
+            || starts_at > scheduled_at.saturating_add(2_592_000)
+        {
+            return Err(HarborError::Validation(
+                "maintenance must start within 30 days and last from 1 through 86400 seconds"
+                    .into(),
+            ));
+        }
+        if self.maintenance.get(route_id).is_some_and(|windows| {
+            windows
+                .iter()
+                .any(|window| window.overlaps(starts_at, ends_at))
+        }) {
+            return Err(HarborError::Conflict(format!(
+                "route {route_id} already has overlapping maintenance"
+            )));
+        }
+        let sequence = self
+            .maintenance_sequence
+            .checked_add(1)
+            .ok_or_else(|| HarborError::Conflict("maintenance sequence is exhausted".into()))?;
+        let maintenance = RouteMaintenance {
+            id: format!("maintenance-{sequence}"),
+            sequence,
+            route_id: route_id.to_owned(),
+            starts_at,
+            ends_at,
+            scheduled_by: actor,
+            reason,
+            scheduled_at,
+            cancelled_at: None,
+            cancelled_by: None,
+            cancellation_reason: None,
+        };
+        self.journal
+            .append(&Record::Maintenance(maintenance.clone()))?;
+        self.maintenance_sequence = sequence;
+        self.upsert_maintenance(maintenance.clone());
+        Ok(maintenance)
+    }
+
+    /// Cancels a future or active maintenance window with accountable context.
+    ///
+    /// # Errors
+    ///
+    /// Returns not-found for an unknown route or window, conflict when the
+    /// window is already cancelled or ended, validation for missing context or
+    /// an impossible cancellation time, or a journal error without mutation.
+    pub fn cancel_route_maintenance(
+        &mut self,
+        route_id: &str,
+        maintenance_id: &str,
+        actor: &str,
+        reason: &str,
+        cancelled_at: u64,
+    ) -> Result<RouteMaintenance, HarborError> {
+        if !self.routes.contains_key(route_id) {
+            return Err(HarborError::NotFound(format!("route {route_id}")));
+        }
+        let actor = crate::model::required(actor, "maintenance cancellation actor", 120)?;
+        let reason = crate::model::required(reason, "maintenance cancellation reason", 1_000)?;
+        let mut maintenance = self
+            .maintenance
+            .get(route_id)
+            .and_then(|windows| windows.iter().find(|window| window.id == maintenance_id))
+            .cloned()
+            .ok_or_else(|| HarborError::NotFound(format!("maintenance {maintenance_id}")))?;
+        if maintenance.cancelled_at.is_some() {
+            return Err(HarborError::Conflict(format!(
+                "maintenance {maintenance_id} is already cancelled"
+            )));
+        }
+        if cancelled_at < maintenance.scheduled_at {
+            return Err(HarborError::Validation(
+                "maintenance cancellation cannot predate scheduling".into(),
+            ));
+        }
+        if cancelled_at >= maintenance.ends_at {
+            return Err(HarborError::Conflict(format!(
+                "maintenance {maintenance_id} has already ended"
+            )));
+        }
+        maintenance.cancelled_at = Some(cancelled_at);
+        maintenance.cancelled_by = Some(actor);
+        maintenance.cancellation_reason = Some(reason);
+        self.journal
+            .append(&Record::Maintenance(maintenance.clone()))?;
+        self.upsert_maintenance(maintenance.clone());
+        Ok(maintenance)
+    }
+
+    /// Returns durable maintenance history in start and sequence order.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HarborError::NotFound`] for an unknown route.
+    pub fn route_maintenance(&self, route_id: &str) -> Result<Vec<RouteMaintenance>, HarborError> {
+        if !self.routes.contains_key(route_id) {
+            return Err(HarborError::NotFound(format!("route {route_id}")));
+        }
+        let mut windows = self.maintenance.get(route_id).cloned().unwrap_or_default();
+        windows.sort_by_key(|window| (window.starts_at, window.sequence));
+        Ok(windows)
     }
 
     /// Reports whether a route is closed, cooling down, or ready for a probe.
@@ -1211,7 +1350,14 @@ impl SignalHarbor {
                 && route
                     .circuit_open_until
                     .is_none_or(|open_until| open_until <= now)
+                && !self.route_under_maintenance(route_id, now)
         })
+    }
+
+    fn route_under_maintenance(&self, route_id: &str, now: u64) -> bool {
+        self.maintenance
+            .get(route_id)
+            .is_some_and(|windows| windows.iter().any(|window| window.active_at(now)))
     }
 
     fn active_hold(&self, delivery_id: &str, now: u64) -> Option<&DeliveryHold> {
@@ -1234,6 +1380,22 @@ impl SignalHarbor {
         }
     }
 
+    fn upsert_maintenance(&mut self, maintenance: RouteMaintenance) {
+        let windows = self
+            .maintenance
+            .entry(maintenance.route_id.clone())
+            .or_default();
+        if let Some(existing) = windows
+            .iter_mut()
+            .find(|existing| existing.id == maintenance.id)
+        {
+            *existing = maintenance;
+        } else {
+            windows.push(maintenance);
+            windows.sort_by_key(|window| window.sequence);
+        }
+    }
+
     fn route_for_attempt(&self, route_id: &str, attempted_at: u64) -> Result<Route, HarborError> {
         let route = self
             .routes
@@ -1247,6 +1409,16 @@ impl SignalHarbor {
             return Err(HarborError::Conflict(format!(
                 "route {} circuit is open until {open_until}",
                 route.id
+            )));
+        }
+        if let Some(window) = self
+            .maintenance
+            .get(route_id)
+            .and_then(|windows| windows.iter().find(|window| window.active_at(attempted_at)))
+        {
+            return Err(HarborError::Conflict(format!(
+                "route {} is in maintenance until {}",
+                route.id, window.ends_at
             )));
         }
         Ok(route)
@@ -1291,6 +1463,7 @@ impl SignalHarbor {
         }
         self.validate_cancellations()?;
         self.validate_holds()?;
+        self.validate_maintenance()?;
         for route in self.routes.values() {
             if !(1..=100).contains(&route.failure_threshold) {
                 return Err(HarborError::Journal(format!(
@@ -1311,6 +1484,26 @@ impl SignalHarbor {
                 )));
             }
         }
+        let latest_attempt_sequence = self.validate_attempts()?;
+        self.event_sequence = self.events.len() as u64;
+        self.delivery_sequence = self.deliveries.len() as u64;
+        self.attempt_sequence = latest_attempt_sequence;
+        self.hold_sequence = self
+            .holds
+            .values()
+            .flat_map(|holds| holds.iter().map(|hold| hold.sequence))
+            .max()
+            .unwrap_or(0);
+        self.maintenance_sequence = self
+            .maintenance
+            .values()
+            .flat_map(|windows| windows.iter().map(|window| window.sequence))
+            .max()
+            .unwrap_or(0);
+        Ok(())
+    }
+
+    fn validate_attempts(&mut self) -> Result<u64, HarborError> {
         let mut latest_attempt_sequence = 0;
         for (delivery_id, attempts) in &mut self.attempts {
             if !self.deliveries.contains_key(delivery_id) {
@@ -1343,16 +1536,7 @@ impl SignalHarbor {
                 latest_attempt_sequence = latest_attempt_sequence.max(attempt.sequence);
             }
         }
-        self.event_sequence = self.events.len() as u64;
-        self.delivery_sequence = self.deliveries.len() as u64;
-        self.attempt_sequence = latest_attempt_sequence;
-        self.hold_sequence = self
-            .holds
-            .values()
-            .flat_map(|holds| holds.iter().map(|hold| hold.sequence))
-            .max()
-            .unwrap_or(0);
-        Ok(())
+        Ok(latest_attempt_sequence)
     }
 
     fn validate_cancellations(&self) -> Result<(), HarborError> {
@@ -1436,6 +1620,76 @@ impl SignalHarbor {
                     )));
                 }
                 active_intervals.push((hold.held_at, end));
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_maintenance(&self) -> Result<(), HarborError> {
+        let mut sequences = std::collections::BTreeSet::new();
+        for (route_id, windows) in &self.maintenance {
+            if !self.routes.contains_key(route_id) {
+                return Err(HarborError::Journal(format!(
+                    "maintenance history references missing route {route_id}"
+                )));
+            }
+            let mut active_intervals: Vec<(u64, u64)> = Vec::new();
+            for window in windows {
+                if window.route_id != *route_id || window.sequence == 0 {
+                    return Err(HarborError::Journal(format!(
+                        "maintenance {} has invalid identity or sequence",
+                        window.id
+                    )));
+                }
+                if !sequences.insert(window.sequence) {
+                    return Err(HarborError::Journal(format!(
+                        "duplicate maintenance sequence {}",
+                        window.sequence
+                    )));
+                }
+                if window.starts_at < window.scheduled_at
+                    || window.ends_at <= window.starts_at
+                    || window.ends_at > window.starts_at.saturating_add(86_400)
+                    || window.starts_at > window.scheduled_at.saturating_add(2_592_000)
+                {
+                    return Err(HarborError::Journal(format!(
+                        "maintenance {} has an invalid interval",
+                        window.id
+                    )));
+                }
+                let cancellation_fields = [
+                    window.cancelled_at.is_some(),
+                    window.cancelled_by.is_some(),
+                    window.cancellation_reason.is_some(),
+                ];
+                if cancellation_fields.iter().any(|present| *present)
+                    && !cancellation_fields.iter().all(|present| *present)
+                {
+                    return Err(HarborError::Journal(format!(
+                        "maintenance {} has incomplete cancellation metadata",
+                        window.id
+                    )));
+                }
+                if window.cancelled_at.is_some_and(|cancelled_at| {
+                    cancelled_at < window.scheduled_at || cancelled_at >= window.ends_at
+                }) {
+                    return Err(HarborError::Journal(format!(
+                        "maintenance {} has an invalid cancellation time",
+                        window.id
+                    )));
+                }
+                if window.cancelled_at.is_none()
+                    && active_intervals
+                        .iter()
+                        .any(|(start, end)| window.starts_at < *end && *start < window.ends_at)
+                {
+                    return Err(HarborError::Journal(format!(
+                        "route {route_id} has overlapping maintenance windows"
+                    )));
+                }
+                if window.cancelled_at.is_none() {
+                    active_intervals.push((window.starts_at, window.ends_at));
+                }
             }
         }
         Ok(())
