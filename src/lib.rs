@@ -12,5 +12,5 @@ pub use model::{
     BulkRedriveResult, CircuitState, Delivery, DeliveryAttempt, DeliveryCancellation, DeliveryHold,
     DeliveryState, EndpointUpdateMode, EndpointUpdateResult, HarborError, HarborSummary,
     IngestResult, Route, RouteCircuitHealth, RouteConcurrencyHealth, RouteMaintenance,
-    WebhookEvent, WebhookInput,
+    TenantIngressFreeze, WebhookEvent, WebhookInput,
 };

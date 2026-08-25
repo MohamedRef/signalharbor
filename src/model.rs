@@ -186,6 +186,43 @@ impl RouteMaintenance {
     }
 }
 
+/// A bounded tenant-level stop on accepting new webhook events.
+///
+/// A freeze is intentionally separate from route maintenance: it protects the
+/// durable ingress boundary before any delivery fan-out is created. Duplicate
+/// retries for an event accepted before the freeze remain safe and idempotent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TenantIngressFreeze {
+    pub id: String,
+    pub sequence: u64,
+    pub tenant: String,
+    pub starts_at: u64,
+    pub expires_at: u64,
+    pub imposed_by: String,
+    pub reason: String,
+    pub imposed_at: u64,
+    pub lifted_at: Option<u64>,
+    pub lifted_by: Option<String>,
+    pub lift_reason: Option<String>,
+}
+
+impl TenantIngressFreeze {
+    #[must_use]
+    pub fn active_at(&self, now: u64) -> bool {
+        self.lifted_at.is_none() && self.starts_at <= now && now < self.expires_at
+    }
+
+    #[must_use]
+    pub fn effective_end(&self) -> u64 {
+        self.lifted_at.unwrap_or(self.expires_at)
+    }
+
+    #[must_use]
+    pub fn overlaps(&self, starts_at: u64, expires_at: u64) -> bool {
+        starts_at < self.effective_end() && self.starts_at < expires_at
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WebhookInput {
     pub tenant: String,

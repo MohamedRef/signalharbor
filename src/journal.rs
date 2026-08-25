@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use crate::model::{
     AttemptOutcome, Delivery, DeliveryAttempt, DeliveryCancellation, DeliveryHold, DeliveryState,
-    HarborError, Route, RouteMaintenance, WebhookEvent,
+    HarborError, Route, RouteMaintenance, TenantIngressFreeze, WebhookEvent,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -16,6 +16,7 @@ pub(crate) enum Record {
     Cancellation(DeliveryCancellation),
     Hold(DeliveryHold),
     Maintenance(RouteMaintenance),
+    IngressFreeze(TenantIngressFreeze),
 }
 
 #[derive(Debug, Clone)]
@@ -200,6 +201,7 @@ fn encode_record(record: &Record) -> String {
         .join("|"),
         Record::Hold(hold) => encode_hold(hold),
         Record::Maintenance(maintenance) => encode_maintenance(maintenance),
+        Record::IngressFreeze(freeze) => encode_ingress_freeze(freeze),
     }
 }
 
@@ -291,11 +293,66 @@ fn decode_record(line: &str) -> Result<Record, HarborError> {
         })),
         Some("H") if parts.len() == 10 => decode_hold(&parts).map(Record::Hold),
         Some("M") if parts.len() == 12 => decode_maintenance(&parts).map(Record::Maintenance),
+        Some("F") if parts.len() == 12 => decode_ingress_freeze(&parts).map(Record::IngressFreeze),
         Some(kind) => Err(HarborError::Journal(format!(
             "unknown record or field count: {kind}"
         ))),
         None => Err(HarborError::Journal("empty record".into())),
     }
+}
+
+fn encode_ingress_freeze(freeze: &TenantIngressFreeze) -> String {
+    [
+        "F".to_owned(),
+        encode_text(&freeze.id),
+        freeze.sequence.to_string(),
+        encode_text(&freeze.tenant),
+        freeze.starts_at.to_string(),
+        freeze.expires_at.to_string(),
+        encode_text(&freeze.imposed_by),
+        encode_text(&freeze.reason),
+        freeze.imposed_at.to_string(),
+        freeze
+            .lifted_at
+            .map_or_else(|| "-".to_owned(), |value| value.to_string()),
+        freeze
+            .lifted_by
+            .as_deref()
+            .map_or_else(|| "-".to_owned(), encode_text),
+        freeze
+            .lift_reason
+            .as_deref()
+            .map_or_else(|| "-".to_owned(), encode_text),
+    ]
+    .join("|")
+}
+
+fn decode_ingress_freeze(parts: &[&str]) -> Result<TenantIngressFreeze, HarborError> {
+    Ok(TenantIngressFreeze {
+        id: decode_text(parts[1])?,
+        sequence: number(parts[2], "ingress freeze sequence")?,
+        tenant: decode_text(parts[3])?,
+        starts_at: number(parts[4], "ingress freeze start")?,
+        expires_at: number(parts[5], "ingress freeze expiry")?,
+        imposed_by: decode_text(parts[6])?,
+        reason: decode_text(parts[7])?,
+        imposed_at: number(parts[8], "ingress freeze imposed_at")?,
+        lifted_at: if parts[9] == "-" {
+            None
+        } else {
+            Some(number(parts[9], "ingress freeze lifted_at")?)
+        },
+        lifted_by: if parts[10] == "-" {
+            None
+        } else {
+            Some(decode_text(parts[10])?)
+        },
+        lift_reason: if parts[11] == "-" {
+            None
+        } else {
+            Some(decode_text(parts[11])?)
+        },
+    })
 }
 
 fn encode_hold(hold: &DeliveryHold) -> String {

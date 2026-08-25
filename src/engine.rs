@@ -7,7 +7,7 @@ use crate::model::{
     BulkRedriveResult, CircuitState, Delivery, DeliveryAttempt, DeliveryCancellation, DeliveryHold,
     DeliveryState, EndpointUpdateMode, EndpointUpdateResult, HarborError, HarborSummary,
     IngestResult, Route, RouteCircuitHealth, RouteConcurrencyHealth, RouteMaintenance,
-    WebhookEvent, WebhookInput,
+    TenantIngressFreeze, WebhookEvent, WebhookInput,
 };
 
 pub struct SignalHarbor {
@@ -19,12 +19,14 @@ pub struct SignalHarbor {
     cancellations: BTreeMap<String, DeliveryCancellation>,
     holds: BTreeMap<String, Vec<DeliveryHold>>,
     maintenance: BTreeMap<String, Vec<RouteMaintenance>>,
+    ingress_freezes: BTreeMap<String, Vec<TenantIngressFreeze>>,
     dedupe: HashMap<(String, String), String>,
     event_sequence: u64,
     delivery_sequence: u64,
     attempt_sequence: u64,
     hold_sequence: u64,
     maintenance_sequence: u64,
+    ingress_freeze_sequence: u64,
 }
 
 impl SignalHarbor {
@@ -45,12 +47,14 @@ impl SignalHarbor {
             cancellations: BTreeMap::new(),
             holds: BTreeMap::new(),
             maintenance: BTreeMap::new(),
+            ingress_freezes: BTreeMap::new(),
             dedupe: HashMap::new(),
             event_sequence: 0,
             delivery_sequence: 0,
             attempt_sequence: 0,
             hold_sequence: 0,
             maintenance_sequence: 0,
+            ingress_freeze_sequence: 0,
         };
         for record in harbor.journal.replay()? {
             match record {
@@ -77,6 +81,7 @@ impl SignalHarbor {
                 }
                 Record::Hold(hold) => harbor.upsert_hold(hold),
                 Record::Maintenance(maintenance) => harbor.upsert_maintenance(maintenance),
+                Record::IngressFreeze(freeze) => harbor.upsert_ingress_freeze(freeze),
             }
         }
         harbor.rebuild_indexes()?;
@@ -451,6 +456,168 @@ impl SignalHarbor {
         })
     }
 
+    /// Schedules a bounded tenant-level ingress freeze.
+    ///
+    /// The tenant must already own at least one registered route. Freeze
+    /// intervals cannot overlap, may be scheduled at most 30 days ahead, and
+    /// expire automatically within seven days. Persistence happens before the
+    /// new control becomes visible in memory.
+    ///
+    /// # Errors
+    ///
+    /// Returns validation for invalid context or timing, not-found for an
+    /// unknown tenant, conflict for overlapping controls or an exhausted id
+    /// sequence, and journal errors without changing visible state.
+    pub fn impose_ingress_freeze(
+        &mut self,
+        tenant: &str,
+        starts_at: u64,
+        expires_at: u64,
+        actor: &str,
+        reason: &str,
+        imposed_at: u64,
+    ) -> Result<TenantIngressFreeze, HarborError> {
+        let tenant = crate::model::required(tenant, "tenant", 80)?.to_ascii_lowercase();
+        let actor = crate::model::required(actor, "ingress freeze actor", 120)?;
+        let reason = crate::model::required(reason, "ingress freeze reason", 1_000)?;
+        if !self.routes.values().any(|route| route.tenant == tenant) {
+            return Err(HarborError::NotFound(format!("tenant {tenant}")));
+        }
+        if starts_at < imposed_at
+            || starts_at > imposed_at.saturating_add(2_592_000)
+            || expires_at <= starts_at
+            || expires_at > starts_at.saturating_add(604_800)
+        {
+            return Err(HarborError::Validation(
+                "ingress freeze must start within 30 days and last from 1 second through 7 days"
+                    .into(),
+            ));
+        }
+        if self.ingress_freezes.get(&tenant).is_some_and(|freezes| {
+            freezes
+                .iter()
+                .any(|freeze| freeze.overlaps(starts_at, expires_at))
+        }) {
+            return Err(HarborError::Conflict(format!(
+                "tenant {tenant} already has an overlapping ingress freeze"
+            )));
+        }
+        let sequence = self
+            .ingress_freeze_sequence
+            .checked_add(1)
+            .ok_or_else(|| HarborError::Conflict("ingress freeze sequence is exhausted".into()))?;
+        let freeze = TenantIngressFreeze {
+            id: format!("freeze-{sequence:012}"),
+            sequence,
+            tenant,
+            starts_at,
+            expires_at,
+            imposed_by: actor,
+            reason,
+            imposed_at,
+            lifted_at: None,
+            lifted_by: None,
+            lift_reason: None,
+        };
+        self.journal
+            .append(&Record::IngressFreeze(freeze.clone()))?;
+        self.ingress_freeze_sequence = sequence;
+        self.upsert_ingress_freeze(freeze.clone());
+        Ok(freeze)
+    }
+
+    /// Lifts a future or active ingress freeze with durable operator context.
+    ///
+    /// # Errors
+    ///
+    /// Returns not-found for an unknown tenant or freeze, conflict for an
+    /// already lifted or expired freeze, validation for incomplete context or
+    /// an impossible timestamp, and journal errors without visible mutation.
+    pub fn lift_ingress_freeze(
+        &mut self,
+        tenant: &str,
+        freeze_id: &str,
+        actor: &str,
+        reason: &str,
+        lifted_at: u64,
+    ) -> Result<TenantIngressFreeze, HarborError> {
+        let tenant = crate::model::required(tenant, "tenant", 80)?.to_ascii_lowercase();
+        let actor = crate::model::required(actor, "ingress freeze lift actor", 120)?;
+        let reason = crate::model::required(reason, "ingress freeze lift reason", 1_000)?;
+        let mut freeze = self
+            .ingress_freezes
+            .get(&tenant)
+            .and_then(|freezes| freezes.iter().find(|freeze| freeze.id == freeze_id))
+            .cloned()
+            .ok_or_else(|| HarborError::NotFound(format!("ingress freeze {freeze_id}")))?;
+        if freeze.lifted_at.is_some() {
+            return Err(HarborError::Conflict(format!(
+                "ingress freeze {freeze_id} is already lifted"
+            )));
+        }
+        if lifted_at < freeze.imposed_at {
+            return Err(HarborError::Validation(
+                "ingress freeze lift cannot predate imposition".into(),
+            ));
+        }
+        if lifted_at >= freeze.expires_at {
+            return Err(HarborError::Conflict(format!(
+                "ingress freeze {freeze_id} has already expired"
+            )));
+        }
+        freeze.lifted_at = Some(lifted_at);
+        freeze.lifted_by = Some(actor);
+        freeze.lift_reason = Some(reason);
+        self.journal
+            .append(&Record::IngressFreeze(freeze.clone()))?;
+        self.upsert_ingress_freeze(freeze.clone());
+        Ok(freeze)
+    }
+
+    /// Returns deterministic ingress-freeze history for a registered tenant.
+    ///
+    /// # Errors
+    ///
+    /// Returns not-found when the tenant has no registered route.
+    pub fn tenant_ingress_freezes(
+        &self,
+        tenant: &str,
+    ) -> Result<Vec<TenantIngressFreeze>, HarborError> {
+        let tenant = tenant.to_ascii_lowercase();
+        if !self.routes.values().any(|route| route.tenant == tenant) {
+            return Err(HarborError::NotFound(format!("tenant {tenant}")));
+        }
+        let mut freezes = self
+            .ingress_freezes
+            .get(&tenant)
+            .cloned()
+            .unwrap_or_default();
+        freezes.sort_by(|left, right| {
+            left.starts_at
+                .cmp(&right.starts_at)
+                .then_with(|| left.sequence.cmp(&right.sequence))
+        });
+        Ok(freezes)
+    }
+
+    /// Lists currently active tenant freezes by expiry and identifier.
+    #[must_use]
+    pub fn active_ingress_freezes(&self, now: u64) -> Vec<TenantIngressFreeze> {
+        let mut active = self
+            .ingress_freezes
+            .values()
+            .flatten()
+            .filter(|freeze| freeze.active_at(now))
+            .cloned()
+            .collect::<Vec<_>>();
+        active.sort_by(|left, right| {
+            left.expires_at
+                .cmp(&right.expires_at)
+                .then_with(|| left.id.cmp(&right.id))
+        });
+        active
+    }
+
     /// Accepts an event, deduplicates it, and creates initial deliveries in one transaction.
     ///
     /// # Errors
@@ -474,6 +641,13 @@ impl SignalHarbor {
                 duplicate: true,
                 delivery_ids: self.delivery_ids_for_event(&existing.id),
             });
+        }
+
+        if let Some(freeze) = self.active_ingress_freeze(&input.tenant, input.received_at) {
+            return Err(HarborError::Conflict(format!(
+                "tenant {} ingress is frozen until {} by {}",
+                input.tenant, freeze.expires_at, freeze.id
+            )));
         }
 
         let event_sequence = self.event_sequence + 1;
@@ -1396,6 +1570,25 @@ impl SignalHarbor {
         }
     }
 
+    fn active_ingress_freeze(&self, tenant: &str, now: u64) -> Option<&TenantIngressFreeze> {
+        self.ingress_freezes
+            .get(&tenant.to_ascii_lowercase())
+            .and_then(|freezes| freezes.iter().find(|freeze| freeze.active_at(now)))
+    }
+
+    fn upsert_ingress_freeze(&mut self, freeze: TenantIngressFreeze) {
+        let freezes = self
+            .ingress_freezes
+            .entry(freeze.tenant.clone())
+            .or_default();
+        if let Some(existing) = freezes.iter_mut().find(|existing| existing.id == freeze.id) {
+            *existing = freeze;
+        } else {
+            freezes.push(freeze);
+            freezes.sort_by_key(|item| item.sequence);
+        }
+    }
+
     fn route_for_attempt(&self, route_id: &str, attempted_at: u64) -> Result<Route, HarborError> {
         let route = self
             .routes
@@ -1464,6 +1657,7 @@ impl SignalHarbor {
         self.validate_cancellations()?;
         self.validate_holds()?;
         self.validate_maintenance()?;
+        self.validate_ingress_freezes()?;
         for route in self.routes.values() {
             if !(1..=100).contains(&route.failure_threshold) {
                 return Err(HarborError::Journal(format!(
@@ -1498,6 +1692,12 @@ impl SignalHarbor {
             .maintenance
             .values()
             .flat_map(|windows| windows.iter().map(|window| window.sequence))
+            .max()
+            .unwrap_or(0);
+        self.ingress_freeze_sequence = self
+            .ingress_freezes
+            .values()
+            .flat_map(|freezes| freezes.iter().map(|freeze| freeze.sequence))
             .max()
             .unwrap_or(0);
         Ok(())
@@ -1690,6 +1890,74 @@ impl SignalHarbor {
                 if window.cancelled_at.is_none() {
                     active_intervals.push((window.starts_at, window.ends_at));
                 }
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_ingress_freezes(&self) -> Result<(), HarborError> {
+        let mut sequences = std::collections::BTreeSet::new();
+        for (tenant, freezes) in &self.ingress_freezes {
+            if !self.routes.values().any(|route| route.tenant == *tenant) {
+                return Err(HarborError::Journal(format!(
+                    "ingress freeze history references unknown tenant {tenant}"
+                )));
+            }
+            let mut active_intervals: Vec<(u64, u64)> = Vec::new();
+            for freeze in freezes {
+                if freeze.tenant != *tenant || freeze.sequence == 0 {
+                    return Err(HarborError::Journal(format!(
+                        "ingress freeze {} has invalid identity or sequence",
+                        freeze.id
+                    )));
+                }
+                if !sequences.insert(freeze.sequence) {
+                    return Err(HarborError::Journal(format!(
+                        "duplicate ingress freeze sequence {}",
+                        freeze.sequence
+                    )));
+                }
+                if freeze.starts_at < freeze.imposed_at
+                    || freeze.starts_at > freeze.imposed_at.saturating_add(2_592_000)
+                    || freeze.expires_at <= freeze.starts_at
+                    || freeze.expires_at > freeze.starts_at.saturating_add(604_800)
+                {
+                    return Err(HarborError::Journal(format!(
+                        "ingress freeze {} has an invalid interval",
+                        freeze.id
+                    )));
+                }
+                let lift_fields = [
+                    freeze.lifted_at.is_some(),
+                    freeze.lifted_by.is_some(),
+                    freeze.lift_reason.is_some(),
+                ];
+                if lift_fields.iter().any(|present| *present)
+                    && !lift_fields.iter().all(|present| *present)
+                {
+                    return Err(HarborError::Journal(format!(
+                        "ingress freeze {} has incomplete lift metadata",
+                        freeze.id
+                    )));
+                }
+                if freeze.lifted_at.is_some_and(|lifted_at| {
+                    lifted_at < freeze.imposed_at || lifted_at >= freeze.expires_at
+                }) {
+                    return Err(HarborError::Journal(format!(
+                        "ingress freeze {} has an invalid lift time",
+                        freeze.id
+                    )));
+                }
+                let end = freeze.effective_end();
+                if active_intervals
+                    .iter()
+                    .any(|(start, existing_end)| freeze.starts_at < *existing_end && *start < end)
+                {
+                    return Err(HarborError::Journal(format!(
+                        "tenant {tenant} has overlapping ingress freezes"
+                    )));
+                }
+                active_intervals.push((freeze.starts_at, end));
             }
         }
         Ok(())
