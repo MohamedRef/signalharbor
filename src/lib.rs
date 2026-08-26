@@ -1,10 +1,12 @@
 mod casebook;
+mod endpoint_health;
 mod engine;
 mod ingress;
 mod journal;
 mod model;
 
 pub use casebook::{CaseDisposition, CaseStatus, DeadLetterCase, DeadLetterCasebook};
+pub use endpoint_health::{EndpointHealth, EndpointHealthMonitor, EndpointStatus, ProbeOutcome};
 pub use engine::SignalHarbor;
 pub use ingress::{
     AdmissionDecision, IngressGate, IngressQuota, IngressRejectReason, IngressUsage,

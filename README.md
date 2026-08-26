@@ -111,3 +111,8 @@ docker build --tag signalharbor-dependencies .
 This private project is developed and owned by MohamedRef. Project direction,
 review, repository ownership, and final decisions remain with MohamedRef. The
 repository does not claim external eligibility or certification.
+
+Route endpoints can now be governed by a durable health-probe journal. Probes are accepted only
+when due and only for the configured HTTPS endpoint, classify timeouts and HTTP failures, degrade
+before a configurable failure threshold, and recover on success. Delivery admission fails closed
+for unknown, unavailable, or stale endpoint health while due-route queues remain deterministic.
