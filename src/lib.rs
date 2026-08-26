@@ -4,6 +4,7 @@ mod engine;
 mod ingress;
 mod journal;
 mod model;
+mod retention;
 
 pub use casebook::{CaseDisposition, CaseStatus, DeadLetterCase, DeadLetterCasebook};
 pub use endpoint_health::{EndpointHealth, EndpointHealthMonitor, EndpointStatus, ProbeOutcome};
@@ -18,3 +19,4 @@ pub use model::{
     IngestResult, Route, RouteCircuitHealth, RouteConcurrencyHealth, RouteMaintenance,
     TenantIngressFreeze, WebhookEvent, WebhookInput,
 };
+pub use retention::{PayloadRecord, PayloadRetention, PayloadState, PurgeResult};
