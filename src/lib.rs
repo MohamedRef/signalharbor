@@ -5,6 +5,7 @@ mod ingress;
 mod journal;
 mod model;
 mod retention;
+mod routing_preview;
 
 pub use casebook::{CaseDisposition, CaseStatus, DeadLetterCase, DeadLetterCasebook};
 pub use endpoint_health::{EndpointHealth, EndpointHealthMonitor, EndpointStatus, ProbeOutcome};
@@ -20,3 +21,4 @@ pub use model::{
     TenantIngressFreeze, WebhookEvent, WebhookInput,
 };
 pub use retention::{PayloadRecord, PayloadRetention, PayloadState, PurgeResult};
+pub use routing_preview::{RouteMatch, RoutePreview, preview_routes};
