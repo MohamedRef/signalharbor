@@ -6,6 +6,7 @@ mod ingress;
 mod journal;
 mod model;
 mod retention;
+mod retry_budget;
 mod retry_plan;
 mod routing_preview;
 mod slo;
@@ -25,6 +26,7 @@ pub use model::{
     TenantIngressFreeze, WebhookEvent, WebhookInput,
 };
 pub use retention::{PayloadRecord, PayloadRetention, PayloadState, PurgeResult};
+pub use retry_budget::{RetryBudgetAllocation, RetryDemand, allocate_retry_budget};
 pub use retry_plan::{RetryPlan, RetryPolicy, RetrySlot, plan_retries};
 pub use routing_preview::{RouteMatch, RoutePreview, preview_routes};
 pub use slo::{
