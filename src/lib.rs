@@ -1,4 +1,5 @@
 mod casebook;
+mod endpoint_drain;
 mod endpoint_health;
 mod engine;
 mod failure_classifier;
@@ -12,6 +13,7 @@ mod routing_preview;
 mod slo;
 
 pub use casebook::{CaseDisposition, CaseStatus, DeadLetterCase, DeadLetterCasebook};
+pub use endpoint_drain::{DrainAssessment, DrainInput, DrainReadiness, assess_endpoint_drain};
 pub use endpoint_health::{EndpointHealth, EndpointHealthMonitor, EndpointStatus, ProbeOutcome};
 pub use engine::SignalHarbor;
 pub use failure_classifier::{DeliveryDisposition, DeliveryResponse, classify_delivery_response};
