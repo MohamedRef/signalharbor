@@ -7,6 +7,7 @@ mod model;
 mod retention;
 mod retry_plan;
 mod routing_preview;
+mod slo;
 
 pub use casebook::{CaseDisposition, CaseStatus, DeadLetterCase, DeadLetterCasebook};
 pub use endpoint_health::{EndpointHealth, EndpointHealthMonitor, EndpointStatus, ProbeOutcome};
@@ -24,3 +25,6 @@ pub use model::{
 pub use retention::{PayloadRecord, PayloadRetention, PayloadState, PurgeResult};
 pub use retry_plan::{RetryPlan, RetryPolicy, RetrySlot, plan_retries};
 pub use routing_preview::{RouteMatch, RoutePreview, preview_routes};
+pub use slo::{
+    DeliveryObservation, DeliverySloObjective, DeliverySloReport, evaluate_delivery_slo,
+};
