@@ -5,6 +5,7 @@ mod ingress;
 mod journal;
 mod model;
 mod retention;
+mod retry_plan;
 mod routing_preview;
 
 pub use casebook::{CaseDisposition, CaseStatus, DeadLetterCase, DeadLetterCasebook};
@@ -21,4 +22,5 @@ pub use model::{
     TenantIngressFreeze, WebhookEvent, WebhookInput,
 };
 pub use retention::{PayloadRecord, PayloadRetention, PayloadState, PurgeResult};
+pub use retry_plan::{RetryPlan, RetryPolicy, RetrySlot, plan_retries};
 pub use routing_preview::{RouteMatch, RoutePreview, preview_routes};
