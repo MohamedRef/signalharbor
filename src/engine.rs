@@ -1155,7 +1155,9 @@ impl SignalHarbor {
             true
         });
         available.truncate(limit);
-        let expires_at = now.saturating_add(lease_seconds);
+        let expires_at = now.checked_add(lease_seconds).ok_or_else(|| {
+            HarborError::Validation("lease expiry exceeds timestamp range".into())
+        })?;
         let claimed = available
             .into_iter()
             .map(|mut delivery| {

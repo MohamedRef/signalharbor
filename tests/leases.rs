@@ -153,7 +153,7 @@ fn lease_state_survives_restart() {
 
 #[test]
 fn validates_claim_parameters_and_worker_names() {
-    let (_journal, mut harbor, _ids) = seeded(1);
+    let (_journal, mut harbor, ids) = seeded(1);
     assert!(matches!(
         harbor.claim_due("", 100, 1, 30),
         Err(HarborError::Validation(_))
@@ -170,6 +170,11 @@ fn validates_claim_parameters_and_worker_names() {
         harbor.claim_due("worker", 100, 1, 3_601),
         Err(HarborError::Validation(_))
     ));
+    assert!(matches!(
+        harbor.claim_due("worker", u64::MAX, 1, 30),
+        Err(HarborError::Validation(message)) if message.contains("timestamp range")
+    ));
+    assert!(harbor.delivery(&ids[0]).unwrap().lease_owner.is_none());
 }
 
 #[test]
