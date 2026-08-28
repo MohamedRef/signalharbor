@@ -7,6 +7,7 @@ mod idempotency_horizon;
 mod ingress;
 mod journal;
 mod model;
+mod redrive_throttle;
 mod retention;
 mod retry_budget;
 mod retry_plan;
@@ -31,6 +32,9 @@ pub use model::{
     DeliveryState, EndpointUpdateMode, EndpointUpdateResult, HarborError, HarborSummary,
     IngestResult, Route, RouteCircuitHealth, RouteConcurrencyHealth, RouteMaintenance,
     TenantIngressFreeze, WebhookEvent, WebhookInput,
+};
+pub use redrive_throttle::{
+    RedriveCapacity, RedriveReadiness, RedriveThrottle, calculate_redrive_throttle,
 };
 pub use retention::{PayloadRecord, PayloadRetention, PayloadState, PurgeResult};
 pub use retry_budget::{RetryBudgetAllocation, RetryDemand, allocate_retry_budget};
