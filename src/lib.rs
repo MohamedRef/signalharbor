@@ -3,6 +3,7 @@ mod endpoint_drain;
 mod endpoint_health;
 mod engine;
 mod failure_classifier;
+mod idempotency_horizon;
 mod ingress;
 mod journal;
 mod model;
@@ -18,6 +19,9 @@ pub use endpoint_drain::{DrainAssessment, DrainInput, DrainReadiness, assess_end
 pub use endpoint_health::{EndpointHealth, EndpointHealthMonitor, EndpointStatus, ProbeOutcome};
 pub use engine::SignalHarbor;
 pub use failure_classifier::{DeliveryDisposition, DeliveryResponse, classify_delivery_response};
+pub use idempotency_horizon::{
+    HorizonAssessment, HorizonReadiness, IdempotencyHorizon, assess_idempotency_horizon,
+};
 pub use ingress::{
     AdmissionDecision, IngressGate, IngressQuota, IngressRejectReason, IngressUsage,
 };
