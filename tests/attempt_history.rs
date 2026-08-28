@@ -88,6 +88,19 @@ fn records_retry_and_success_as_ordered_attempts() {
 }
 
 #[test]
+fn retry_rejects_a_due_time_beyond_the_timestamp_range() {
+    let (_journal, mut harbor, delivery_id) = seeded(3);
+    assert!(matches!(
+        harbor.record_attempt(&delivery_id, u64::MAX, AttemptOutcome::Http(503)),
+        Err(HarborError::Validation(message)) if message.contains("timestamp range")
+    ));
+    assert!(harbor.attempt_history(&delivery_id).unwrap().is_empty());
+    let delivery = harbor.delivery(&delivery_id).unwrap();
+    assert_eq!(delivery.attempts, 0);
+    assert_eq!(delivery.state, DeliveryState::Pending);
+}
+
+#[test]
 fn transport_failure_preserves_worker_and_safe_error_text() {
     let (_journal, mut harbor, delivery_id) = seeded(3);
     harbor

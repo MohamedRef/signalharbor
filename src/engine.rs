@@ -1318,7 +1318,9 @@ impl SignalHarbor {
                 .base_delay_seconds
                 .saturating_mul(1_u64 << exponent)
                 .min(86_400);
-            updated.next_attempt_at = attempted_at.saturating_add(delay);
+            updated.next_attempt_at = attempted_at.checked_add(delay).ok_or_else(|| {
+                HarborError::Validation("retry due time exceeds timestamp range".into())
+            })?;
             updated.last_error = Some(error);
             retried = true;
             retry_delay_seconds = Some(delay);
