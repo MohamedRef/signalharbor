@@ -142,7 +142,8 @@ impl EndpointHealthMonitor {
     /// degrades the route, and reaching the configured threshold makes it unavailable.
     ///
     /// # Errors
-    /// Returns not-found, version, scheduling, endpoint, validation, or journal errors.
+    /// Returns not-found, version, scheduling, endpoint, response validation,
+    /// or journal errors.
     #[allow(clippy::too_many_arguments)]
     pub fn record_probe(
         &mut self,
@@ -177,6 +178,11 @@ impl EndpointHealthMonitor {
         if latency_millis == 0 {
             return Err(HarborError::Validation(
                 "probe latency must be positive".into(),
+            ));
+        }
+        if status_code.is_some_and(|code| !(100..=599).contains(&code)) {
+            return Err(HarborError::Validation(
+                "probe status must be from 100 through 599".into(),
             ));
         }
         let successful = status_code.is_some_and(|code| (200..400).contains(&code))

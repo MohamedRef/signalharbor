@@ -135,6 +135,10 @@ fn probe_validates_due_endpoint_latency_and_version() {
         Err(HarborError::Validation(_))
     ));
     assert!(matches!(
+        monitor.record_probe("route", &health.endpoint, Some(600), 10, None, 100, 1),
+        Err(HarborError::Validation(_))
+    ));
+    assert!(matches!(
         monitor.record_probe("route", &health.endpoint, Some(200), 10, None, 100, 99),
         Err(HarborError::Conflict(_))
     ));
