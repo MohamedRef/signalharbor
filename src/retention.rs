@@ -305,6 +305,32 @@ fn validate_record(record: &PayloadRecord) -> Result<(), HarborError> {
             "invalid payload retention window".into(),
         ));
     }
+    if record
+        .terminal_at
+        .is_some_and(|terminal_at| terminal_at < record.received_at)
+    {
+        return Err(HarborError::Journal(
+            "terminal time precedes payload receipt".into(),
+        ));
+    }
+    if record.state == PayloadState::Purged {
+        let terminal_at = record
+            .terminal_at
+            .ok_or_else(|| HarborError::Journal("purged payload is not terminal".into()))?;
+        let purged_at = record
+            .purged_at
+            .ok_or_else(|| HarborError::Journal("purged payload lacks purge time".into()))?;
+        if purged_at < terminal_at || purged_at < record.purge_after {
+            return Err(HarborError::Journal(
+                "payload purge chronology is invalid".into(),
+            ));
+        }
+        if record.legal_hold.is_some() {
+            return Err(HarborError::Journal(
+                "purged payload cannot retain a legal hold".into(),
+            ));
+        }
+    }
     match (&record.state, &record.payload, record.purged_at) {
         (PayloadState::Available, Some(payload), None)
             if payload.len() == record.payload_len

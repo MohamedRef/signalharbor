@@ -245,4 +245,29 @@ fn replay_rejects_payload_integrity_mismatch() {
     ));
 }
 
+#[test]
+fn replay_rejects_impossible_purge_chronology() {
+    let path = journal();
+    let mut retention = PayloadRetention::open(&path).unwrap();
+    retention
+        .capture("event", "tenant", b"payload", 100, 30)
+        .unwrap();
+    retention.mark_terminal("event", 110, 1).unwrap();
+    retention.sweep(130).unwrap();
+    drop(retention);
+
+    let original = fs::read_to_string(&path).unwrap();
+    let mut lines = original.lines().map(str::to_owned).collect::<Vec<_>>();
+    let last = lines.last_mut().unwrap();
+    let mut fields = last.split('\t').collect::<Vec<_>>();
+    fields[10] = "109";
+    *last = fields.join("\t");
+    fs::write(&path, format!("{}\n", lines.join("\n"))).unwrap();
+
+    assert!(matches!(
+        PayloadRetention::open(&path),
+        Err(HarborError::Journal(message)) if message.contains("purge chronology")
+    ));
+}
+
 use std::io::Write;
