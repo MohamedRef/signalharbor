@@ -156,6 +156,14 @@ fn redrive_starts_new_cycle_without_erasing_history() {
     harbor
         .record_attempt(&delivery_id, 100, AttemptOutcome::Http(400))
         .expect("dead letter");
+    assert!(matches!(
+        harbor.redrive(&delivery_id, 99),
+        Err(HarborError::Validation(message)) if message.contains("attempt history")
+    ));
+    assert_eq!(
+        harbor.delivery(&delivery_id).unwrap().state,
+        DeliveryState::DeadLetter
+    );
     harbor.redrive(&delivery_id, 500).expect("redrive");
     harbor
         .record_attempt(&delivery_id, 500, AttemptOutcome::Http(200))

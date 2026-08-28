@@ -137,6 +137,19 @@ fn validates_limit_route_and_active_state_without_mutation() {
 }
 
 #[test]
+fn bulk_redrive_rejects_a_due_time_before_attempt_history() {
+    let (mut harbor, _journal, ids) = dead_letters("chronology", 2);
+    assert!(matches!(
+        harbor.redrive_route_dead_letters("orders", 99, 2),
+        Err(HarborError::Validation(message)) if message.contains("attempt history")
+    ));
+    assert!(
+        ids.iter()
+            .all(|id| harbor.delivery(id).unwrap().state == DeliveryState::DeadLetter)
+    );
+}
+
+#[test]
 fn journal_failure_exposes_no_partial_redrive() {
     let (mut harbor, journal, ids) = dead_letters("journal", 2);
     fs::remove_file(&journal.0).unwrap();

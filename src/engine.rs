@@ -1386,6 +1386,16 @@ impl SignalHarbor {
                 "cannot redrive while the route is inactive".into(),
             ));
         }
+        if self
+            .attempts
+            .get(delivery_id)
+            .and_then(|history| history.last())
+            .is_some_and(|attempt| due_at < attempt.attempted_at)
+        {
+            return Err(HarborError::Validation(
+                "redrive due time cannot precede attempt history".into(),
+            ));
+        }
         let updated = Delivery {
             state: DeliveryState::Pending,
             attempts: 0,
@@ -1443,6 +1453,16 @@ impl SignalHarbor {
         candidates.sort_by(|left, right| left.id.cmp(&right.id));
         let total = candidates.len();
         candidates.truncate(limit);
+        if candidates.iter().any(|delivery| {
+            self.attempts
+                .get(&delivery.id)
+                .and_then(|history| history.last())
+                .is_some_and(|attempt| due_at < attempt.attempted_at)
+        }) {
+            return Err(HarborError::Validation(
+                "bulk redrive due time cannot precede attempt history".into(),
+            ));
+        }
         let updated = candidates
             .into_iter()
             .map(|delivery| Delivery {
