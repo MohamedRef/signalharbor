@@ -145,6 +145,27 @@ fn probe_validates_due_endpoint_latency_and_version() {
 }
 
 #[test]
+fn probe_rejects_a_next_schedule_that_overflows() {
+    let mut monitor = EndpointHealthMonitor::open(journal()).unwrap();
+    let health = monitor
+        .register("route", "https://example.test/health", 30, 100, 2, u64::MAX)
+        .unwrap();
+    assert!(matches!(
+        monitor.record_probe(
+            "route",
+            &health.endpoint,
+            Some(200),
+            10,
+            None,
+            u64::MAX,
+            1
+        ),
+        Err(HarborError::Validation(message)) if message.contains("timestamp range")
+    ));
+    assert_eq!(monitor.health("route").unwrap().version, 1);
+}
+
+#[test]
 fn registration_rejects_invalid_policy_and_duplicates() {
     let mut monitor = EndpointHealthMonitor::open(journal()).unwrap();
     assert!(matches!(

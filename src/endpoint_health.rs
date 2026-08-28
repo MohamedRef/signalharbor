@@ -190,7 +190,9 @@ impl EndpointHealthMonitor {
             && error.is_none();
         let mut next = current.clone();
         next.last_probe_at = Some(at);
-        next.next_probe_at = at.saturating_add(next.interval_seconds);
+        next.next_probe_at = at.checked_add(next.interval_seconds).ok_or_else(|| {
+            HarborError::Validation("next probe time exceeds timestamp range".into())
+        })?;
         next.last_latency_millis = Some(latency_millis);
         next.version += 1;
         if successful {
