@@ -10,6 +10,7 @@ mod retention;
 mod retry_budget;
 mod retry_plan;
 mod routing_preview;
+mod signature_window;
 mod slo;
 
 pub use casebook::{CaseDisposition, CaseStatus, DeadLetterCase, DeadLetterCasebook};
@@ -31,6 +32,9 @@ pub use retention::{PayloadRecord, PayloadRetention, PayloadState, PurgeResult};
 pub use retry_budget::{RetryBudgetAllocation, RetryDemand, allocate_retry_budget};
 pub use retry_plan::{RetryPlan, RetryPolicy, RetrySlot, plan_retries};
 pub use routing_preview::{RouteMatch, RoutePreview, preview_routes};
+pub use signature_window::{
+    SignatureAssessment, SignatureFreshness, SignatureWindow, assess_signature_window,
+};
 pub use slo::{
     DeliveryObservation, DeliverySloObjective, DeliverySloReport, evaluate_delivery_slo,
 };
