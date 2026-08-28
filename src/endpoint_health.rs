@@ -60,6 +60,12 @@ impl EndpointHealthMonitor {
                             line_number + 1
                         ))
                     })?;
+                    validate_replayed(&item).map_err(|message| {
+                        HarborError::Journal(format!(
+                            "endpoint health journal line {}: {message}",
+                            line_number + 1
+                        ))
+                    })?;
                     if let Some(previous) = endpoints.get(&item.route_id) {
                         if item.version != previous.version + 1 {
                             return Err(HarborError::Journal(format!(
@@ -374,6 +380,53 @@ fn decode(line: &str) -> Result<EndpointHealth, String> {
         },
         version: number(fields[11])?,
     })
+}
+
+fn validate_replayed(item: &EndpointHealth) -> Result<(), String> {
+    if item.route_id.trim().is_empty()
+        || item.route_id.len() > 120
+        || !item.endpoint.starts_with("https://")
+        || !(5..=3_600).contains(&item.interval_seconds)
+        || !(100..=60_000).contains(&item.timeout_millis)
+        || !(1..=20).contains(&item.failure_threshold)
+    {
+        return Err("invalid endpoint health policy".into());
+    }
+    let probe_fields_present = item.last_probe_at.is_some() && item.last_latency_millis.is_some();
+    let lifecycle_valid = match item.status {
+        EndpointStatus::Unknown => {
+            item.consecutive_failures == 0
+                && item.last_probe_at.is_none()
+                && item.last_latency_millis.is_none()
+                && item.last_error.is_none()
+        }
+        EndpointStatus::Healthy => {
+            item.consecutive_failures == 0 && probe_fields_present && item.last_error.is_none()
+        }
+        EndpointStatus::Degraded => {
+            item.consecutive_failures > 0
+                && item.consecutive_failures < item.failure_threshold
+                && probe_fields_present
+                && item.last_error.is_some()
+        }
+        EndpointStatus::Unavailable => {
+            item.consecutive_failures >= item.failure_threshold
+                && probe_fields_present
+                && item.last_error.is_some()
+        }
+    };
+    if !lifecycle_valid {
+        return Err("inconsistent endpoint health lifecycle".into());
+    }
+    if let Some(last_probe_at) = item.last_probe_at {
+        let expected = last_probe_at
+            .checked_add(item.interval_seconds)
+            .ok_or_else(|| "next probe timestamp overflow".to_owned())?;
+        if item.next_probe_at != expected {
+            return Err("next probe time does not follow the last probe".into());
+        }
+    }
+    Ok(())
 }
 
 fn number<T: std::str::FromStr>(value: &str) -> Result<T, String> {

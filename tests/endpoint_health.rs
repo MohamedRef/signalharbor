@@ -213,3 +213,21 @@ fn malformed_and_non_contiguous_journals_fail_closed() {
         Err(HarborError::Journal(_))
     ));
 }
+
+#[test]
+fn replay_rejects_invalid_health_policy_and_lifecycle_state() {
+    let path = journal();
+    let mut monitor = EndpointHealthMonitor::open(&path).unwrap();
+    monitor
+        .register("route", "https://example.test", 30, 100, 2, 0)
+        .unwrap();
+    drop(monitor);
+    let original = fs::read_to_string(&path).unwrap();
+    let mut fields = original.trim_end().split('\t').collect::<Vec<_>>();
+    fields[2] = "1";
+    fs::write(&path, format!("{}\n", fields.join("\t"))).unwrap();
+    assert!(matches!(
+        EndpointHealthMonitor::open(&path),
+        Err(HarborError::Journal(message)) if message.contains("invalid endpoint health policy")
+    ));
+}
