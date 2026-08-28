@@ -29,8 +29,8 @@ pub struct RedriveThrottle {
 ///
 /// # Errors
 ///
-/// Returns validation for blank endpoints, zero capacity, an invalid reserve,
-/// or arithmetic overflow.
+/// Returns validation for blank endpoints, zero capacity, impossible live
+/// traffic, an invalid reserve, or arithmetic overflow.
 pub fn calculate_redrive_throttle(input: &RedriveCapacity) -> Result<RedriveThrottle, HarborError> {
     let endpoint = input.endpoint.trim();
     if endpoint.is_empty() || endpoint.len() > 200 {
@@ -41,6 +41,11 @@ pub fn calculate_redrive_throttle(input: &RedriveCapacity) -> Result<RedriveThro
     if input.capacity_per_minute == 0 || input.reserve_percent > 100 {
         return Err(HarborError::Validation(
             "capacity must be positive and reserve cannot exceed 100 percent".into(),
+        ));
+    }
+    if input.live_traffic_per_minute > input.capacity_per_minute {
+        return Err(HarborError::Validation(
+            "live traffic cannot exceed endpoint capacity".into(),
         ));
     }
     let reserve_numerator = input

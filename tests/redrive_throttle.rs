@@ -44,4 +44,10 @@ fn rejects_invalid_redrive_capacity_controls() {
         calculate_redrive_throttle(&invalid),
         Err(HarborError::Validation(_))
     ));
+
+    let impossible_observation = capacity(1_001, 1);
+    assert!(matches!(
+        calculate_redrive_throttle(&impossible_observation),
+        Err(HarborError::Validation(_))
+    ));
 }
