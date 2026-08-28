@@ -57,6 +57,10 @@ fn malformed_status_and_retry_after_are_rejected() {
             status_code: 404,
             retry_after_seconds: Some(1),
         },
+        DeliveryResponse {
+            status_code: 204,
+            retry_after_seconds: Some(1),
+        },
     ] {
         assert!(matches!(
             classify_delivery_response(response),

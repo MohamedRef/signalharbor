@@ -34,19 +34,19 @@ pub fn classify_delivery_response(
             "retry-after cannot exceed one day".into(),
         ));
     }
+    let retryable = matches!(response.status_code, 408 | 425 | 429 | 500..=599);
+    if response.retry_after_seconds.is_some() && !retryable {
+        return Err(HarborError::Validation(
+            "retry-after is only valid on retryable responses".into(),
+        ));
+    }
     if (200..=299).contains(&response.status_code) {
         return Ok(DeliveryDisposition::Delivered);
     }
-    let retryable = matches!(response.status_code, 408 | 425 | 429 | 500..=599);
     if retryable {
         return Ok(DeliveryDisposition::Retry {
             delay_override_seconds: response.retry_after_seconds,
         });
-    }
-    if response.retry_after_seconds.is_some() {
-        return Err(HarborError::Validation(
-            "retry-after is only valid on retryable responses".into(),
-        ));
     }
     Ok(DeliveryDisposition::Drop)
 }
