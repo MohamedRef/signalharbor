@@ -1309,7 +1309,7 @@ impl SignalHarbor {
         updated.lease_expires_at = None;
         let persisted_outcome = outcome.clone();
         let (successful, retryable, error) = classify(outcome);
-        update_circuit(&mut route, successful, retryable, attempted_at);
+        update_circuit(&mut route, successful, retryable, attempted_at)?;
         let mut retried = false;
         let mut retry_delay_seconds = None;
         if successful {
@@ -1991,16 +1991,28 @@ impl SignalHarbor {
     }
 }
 
-fn update_circuit(route: &mut Route, successful: bool, retryable: bool, attempted_at: u64) {
+fn update_circuit(
+    route: &mut Route,
+    successful: bool,
+    retryable: bool,
+    attempted_at: u64,
+) -> Result<(), HarborError> {
     if successful || !retryable {
         route.consecutive_failures = 0;
         route.circuit_open_until = None;
-        return;
+        return Ok(());
     }
     route.consecutive_failures = route.consecutive_failures.saturating_add(1);
     if route.consecutive_failures >= route.failure_threshold {
-        route.circuit_open_until = Some(attempted_at.saturating_add(route.cooldown_seconds));
+        route.circuit_open_until = Some(
+            attempted_at
+                .checked_add(route.cooldown_seconds)
+                .ok_or_else(|| {
+                    HarborError::Validation("circuit cooldown exceeds timestamp range".into())
+                })?,
+        );
     }
+    Ok(())
 }
 
 fn classify(outcome: AttemptOutcome) -> (bool, bool, String) {

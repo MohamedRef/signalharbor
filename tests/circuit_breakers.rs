@@ -254,6 +254,55 @@ fn legacy_route_records_receive_safe_circuit_defaults() {
 }
 
 #[test]
+fn circuit_cooldown_overflow_fails_without_recording_an_attempt() {
+    let journal = Journal::new();
+    let mut harbor = SignalHarbor::open(journal.path()).expect("open");
+    harbor
+        .register_route(
+            Route::new(
+                "overflow",
+                "acme",
+                "orders.*",
+                "https://hooks.example/overflow",
+                1,
+                10,
+            )
+            .expect("route"),
+        )
+        .expect("register route");
+    harbor
+        .configure_circuit_breaker("overflow", 1, 60)
+        .expect("configure circuit");
+    let delivery_id = harbor
+        .ingest(input("overflow", u64::MAX))
+        .expect("ingest")
+        .delivery_ids[0]
+        .clone();
+    let before = harbor.delivery(&delivery_id).expect("delivery before");
+    let error = harbor
+        .record_attempt(&delivery_id, u64::MAX, AttemptOutcome::Http(503))
+        .expect_err("overflowing cooldown must fail");
+    assert!(matches!(error, HarborError::Validation(message) if message.contains("cooldown")));
+    assert_eq!(
+        harbor.delivery(&delivery_id).expect("delivery after"),
+        before
+    );
+    assert!(
+        harbor
+            .attempt_history(&delivery_id)
+            .expect("history")
+            .is_empty()
+    );
+    assert_eq!(
+        harbor
+            .route_circuit_health("overflow", u64::MAX)
+            .expect("health")
+            .state,
+        CircuitState::Closed
+    );
+}
+
+#[test]
 fn malformed_circuit_configuration_in_journal_fails_closed() {
     let journal = Journal::new();
     let invalid = "R|6f7264657273|61636d65|6f72646572732e2a|68747470733a2f2f686f6f6b732e6578616d706c652f6f7264657273|3|10|1|0|60|0|-";
