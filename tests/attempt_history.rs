@@ -1,4 +1,6 @@
+use std::fmt::Write as _;
 use std::fs;
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -61,6 +63,14 @@ fn seeded(max_attempts: u16) -> (Journal, SignalHarbor, String) {
     (journal, harbor, delivery_id)
 }
 
+fn encode_text(value: &str) -> String {
+    let mut encoded = String::with_capacity(value.len() * 2);
+    for byte in value.as_bytes() {
+        write!(&mut encoded, "{byte:02x}").expect("encode text");
+    }
+    encoded
+}
+
 #[test]
 fn records_retry_and_success_as_ordered_attempts() {
     let (_journal, mut harbor, delivery_id) = seeded(3);
@@ -98,6 +108,50 @@ fn retry_rejects_a_due_time_beyond_the_timestamp_range() {
     let delivery = harbor.delivery(&delivery_id).unwrap();
     assert_eq!(delivery.attempts, 0);
     assert_eq!(delivery.state, DeliveryState::Pending);
+}
+
+#[test]
+fn exhausted_attempt_sequence_fails_without_mutating_delivery() {
+    let (journal, harbor, delivery_id) = seeded(3);
+    drop(harbor);
+    let record = format!(
+        "A|{}|{}|{}|1|100|-|http|503|pending|1|110|{}\n",
+        encode_text("att-exhausted"),
+        u64::MAX,
+        encode_text(&delivery_id),
+        encode_text("http 503"),
+    );
+    fs::OpenOptions::new()
+        .append(true)
+        .open(journal.path())
+        .expect("open journal")
+        .write_all(record.as_bytes())
+        .expect("append exhausted attempt sequence");
+
+    let before_journal = fs::read(journal.path()).expect("journal before");
+    let mut restored = SignalHarbor::open(journal.path()).expect("restore exhausted sequence");
+    let before_delivery = restored.delivery(&delivery_id).expect("delivery before");
+    let error = restored
+        .record_attempt(&delivery_id, 100, AttemptOutcome::Http(503))
+        .expect_err("exhausted sequence must fail");
+    assert!(
+        matches!(error, HarborError::Conflict(message) if message.contains("sequence is exhausted"))
+    );
+    assert_eq!(
+        restored.delivery(&delivery_id).expect("delivery after"),
+        before_delivery
+    );
+    assert_eq!(
+        fs::read(journal.path()).expect("journal after"),
+        before_journal
+    );
+    assert_eq!(
+        restored
+            .attempt_history(&delivery_id)
+            .expect("history")
+            .len(),
+        1
+    );
 }
 
 #[test]

@@ -1331,7 +1331,9 @@ impl SignalHarbor {
             updated.state = DeliveryState::DeadLetter;
             updated.last_error = Some(error);
         }
-        let next_sequence = self.attempt_sequence + 1;
+        let next_sequence = self.attempt_sequence.checked_add(1).ok_or_else(|| {
+            HarborError::Conflict("delivery attempt sequence is exhausted".into())
+        })?;
         let attempt = DeliveryAttempt {
             id: format!("att-{next_sequence:012}"),
             sequence: next_sequence,
