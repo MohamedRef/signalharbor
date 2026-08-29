@@ -948,7 +948,10 @@ impl SignalHarbor {
                 "delivery {delivery_id} already has an active hold"
             )));
         }
-        let sequence = self.hold_sequence.saturating_add(1);
+        let sequence = self
+            .hold_sequence
+            .checked_add(1)
+            .ok_or_else(|| HarborError::Conflict("delivery hold sequence is exhausted".into()))?;
         let hold = DeliveryHold {
             id: format!("hold-{sequence}"),
             sequence,

@@ -1,4 +1,6 @@
+use std::fmt::Write as _;
 use std::fs;
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -249,4 +251,46 @@ fn journal_failure_does_not_expose_partial_hold_or_release() {
             .is_empty()
     );
     assert_eq!(harbor.due_deliveries(120, 1).expect("still due").len(), 1);
+}
+
+#[test]
+fn exhausted_hold_sequence_fails_without_appending_a_duplicate() {
+    let (journal, harbor, delivery_id) = seeded("sequence-exhaustion");
+    drop(harbor);
+    let encode = |value: &str| {
+        let mut encoded = String::with_capacity(value.len() * 2);
+        for byte in value.as_bytes() {
+            write!(&mut encoded, "{byte:02x}").expect("encode text");
+        }
+        encoded
+    };
+    let record = format!(
+        "H|{}|{}|{}|{}|{}|101|102|101|{}\n",
+        encode("hold-exhausted"),
+        u64::MAX,
+        encode(&delivery_id),
+        encode("operator"),
+        encode("historical hold"),
+        encode("operator"),
+    );
+    fs::OpenOptions::new()
+        .append(true)
+        .open(journal.path())
+        .expect("open journal")
+        .write_all(record.as_bytes())
+        .expect("append exhausted sequence");
+
+    let before = fs::read(journal.path()).expect("journal before");
+    let mut restored = SignalHarbor::open(journal.path()).expect("restore exhausted sequence");
+    let error = restored
+        .hold_delivery(&delivery_id, "operator", "new hold", 110, 120)
+        .expect_err("exhausted sequence must fail");
+    assert!(
+        matches!(error, HarborError::Conflict(message) if message.contains("sequence is exhausted"))
+    );
+    assert_eq!(fs::read(journal.path()).expect("journal after"), before);
+    assert_eq!(
+        restored.hold_history(&delivery_id).expect("history").len(),
+        1
+    );
 }
