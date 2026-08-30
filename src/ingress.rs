@@ -210,6 +210,11 @@ impl IngressGate {
         }
         let quota = self.quota_for(&tenant).clone();
         let window_started_at = now - (now % quota.window_seconds);
+        let window_ends_at = window_started_at
+            .checked_add(quota.window_seconds)
+            .ok_or_else(|| {
+                HarborError::Validation("ingress window exceeds timestamp range".into())
+            })?;
         let counter = self.usage.entry(tenant.clone()).or_insert(UsageCounter {
             window_started_at,
             accepted_events: 0,
@@ -244,7 +249,7 @@ impl IngressGate {
             duplicate: false,
             reason,
             window_started_at,
-            window_ends_at: window_started_at.saturating_add(quota.window_seconds),
+            window_ends_at,
             remaining_events: quota.max_events.saturating_sub(counter.accepted_events),
             remaining_bytes: quota.max_bytes.saturating_sub(counter.accepted_bytes),
         };
@@ -269,6 +274,11 @@ impl IngressGate {
         let tenant = required(tenant, "tenant", 80)?.to_ascii_lowercase();
         let quota = self.quota_for(&tenant);
         let window_started_at = now - (now % quota.window_seconds);
+        let window_ends_at = window_started_at
+            .checked_add(quota.window_seconds)
+            .ok_or_else(|| {
+                HarborError::Validation("ingress window exceeds timestamp range".into())
+            })?;
         let counter = self
             .usage
             .get(&tenant)
@@ -278,7 +288,7 @@ impl IngressGate {
         Ok(IngressUsage {
             tenant,
             window_started_at,
-            window_ends_at: window_started_at.saturating_add(quota.window_seconds),
+            window_ends_at,
             accepted_events,
             accepted_bytes,
             rejected_events: counter.map_or(0, |value| value.rejected_events),

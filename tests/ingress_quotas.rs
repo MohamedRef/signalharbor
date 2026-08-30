@@ -116,3 +116,17 @@ fn validates_quotas_commands_and_snapshots() {
         IngressGate::restore("INGRESS|1|60|2|1000|700|300\nR|zz|aa|1|1|1|-|0|60|1|1|0\n").is_err()
     );
 }
+
+#[test]
+fn rejects_ingress_windows_that_exceed_the_timestamp_range() {
+    let mut gate = gate();
+    assert!(matches!(
+        gate.admit("tenant", "request", 1, u64::MAX),
+        Err(HarborError::Validation(message)) if message.contains("timestamp range")
+    ));
+    assert!(matches!(
+        gate.usage("tenant", u64::MAX),
+        Err(HarborError::Validation(message)) if message.contains("timestamp range")
+    ));
+    assert!(!gate.snapshot().contains("request"));
+}
