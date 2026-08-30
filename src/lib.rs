@@ -12,6 +12,7 @@ mod redrive_throttle;
 mod retention;
 mod retry_budget;
 mod retry_plan;
+mod route_failover;
 mod routing_preview;
 mod signature_window;
 mod slo;
@@ -41,6 +42,7 @@ pub use redrive_throttle::{
 pub use retention::{PayloadRecord, PayloadRetention, PayloadState, PurgeResult};
 pub use retry_budget::{RetryBudgetAllocation, RetryDemand, allocate_retry_budget};
 pub use retry_plan::{RetryPlan, RetryPolicy, RetrySlot, plan_retries};
+pub use route_failover::{FailoverAllocation, FailoverEndpoint, FailoverPlan, plan_route_failover};
 pub use routing_preview::{RouteMatch, RoutePreview, preview_routes};
 pub use signature_window::{
     SignatureAssessment, SignatureFreshness, SignatureWindow, assess_signature_window,
