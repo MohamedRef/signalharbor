@@ -377,7 +377,7 @@ impl IngressGate {
             let fields = line.split('|').collect::<Vec<_>>();
             match fields.first().copied() {
                 Some("Q") if fields.len() == 6 => {
-                    let tenant = decode(fields[1])?;
+                    let tenant = decoded_identity(fields[1], "tenant", 80, true)?;
                     let quota = IngressQuota::new(
                         number(fields[2], "window")?,
                         number(fields[3], "events")?,
@@ -390,7 +390,7 @@ impl IngressGate {
                     }
                 }
                 Some("U") if fields.len() == 6 => {
-                    let tenant = decode(fields[1])?;
+                    let tenant = decoded_identity(fields[1], "tenant", 80, true)?;
                     let usage = UsageCounter {
                         window_started_at: number(fields[2], "window start")?,
                         accepted_events: number(fields[3], "accepted events")?,
@@ -408,7 +408,7 @@ impl IngressGate {
                     }
                 }
                 Some("R") if fields.len() == 12 => {
-                    let request_id = decode(fields[1])?;
+                    let request_id = decoded_identity(fields[1], "request id", 200, false)?;
                     let reason = if fields[6] == "-" {
                         None
                     } else {
@@ -419,7 +419,7 @@ impl IngressGate {
                         return Err(HarborError::Journal("inconsistent ingress decision".into()));
                     }
                     let receipt = Receipt {
-                        tenant: decode(fields[2])?,
+                        tenant: decoded_identity(fields[2], "tenant", 80, true)?,
                         request_bytes: number(fields[3], "request bytes")?,
                         decided_at: number(fields[4], "decision time")?,
                         decision: AdmissionDecision {
@@ -482,6 +482,23 @@ fn decode(value: &str) -> Result<String, HarborError> {
         .collect::<Result<Vec<_>, _>>()
         .map_err(|_| HarborError::Journal("invalid ingress text encoding".into()))?;
     String::from_utf8(bytes).map_err(|_| HarborError::Journal("invalid ingress utf-8".into()))
+}
+
+fn decoded_identity(
+    encoded: &str,
+    field: &str,
+    maximum: usize,
+    lowercase: bool,
+) -> Result<String, HarborError> {
+    let value = decode(encoded)?;
+    let normalized = required(&value, field, maximum)
+        .map_err(|_| HarborError::Journal(format!("invalid ingress {field}")))?;
+    if normalized != value || (lowercase && value != value.to_ascii_lowercase()) {
+        return Err(HarborError::Journal(format!(
+            "non-canonical ingress {field}"
+        )));
+    }
+    Ok(value)
 }
 
 fn number<T: std::str::FromStr>(value: &str, field: &str) -> Result<T, HarborError> {

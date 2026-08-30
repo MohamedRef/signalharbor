@@ -130,3 +130,19 @@ fn rejects_ingress_windows_that_exceed_the_timestamp_range() {
     ));
     assert!(!gate.snapshot().contains("request"));
 }
+
+#[test]
+fn restore_rejects_blank_or_noncanonical_persisted_identities() {
+    assert!(matches!(
+        IngressGate::restore(
+            "INGRESS|1|60|2|1000|700|300\nR||74656e616e74|1|1|1|-|0|60|1|999|0\n"
+        ),
+        Err(HarborError::Journal(message)) if message.contains("request id")
+    ));
+    assert!(matches!(
+        IngressGate::restore(
+            "INGRESS|1|60|2|1000|700|300\nQ|54656e616e74|60|2|1000|700\n"
+        ),
+        Err(HarborError::Journal(message)) if message.contains("tenant")
+    ));
+}
