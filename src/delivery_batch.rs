@@ -14,6 +14,12 @@ pub struct DeliveryBatch {
     pub payload_bytes: u64,
 }
 
+/// Builds deterministic endpoint batches within count and byte ceilings.
+///
+/// # Errors
+///
+/// Returns validation for zero limits, duplicate event identities, missing
+/// endpoint data, zero payloads, or payloads larger than the byte ceiling.
 pub fn build_delivery_batches(
     events: &[BatchEvent],
     max_events: usize,
@@ -57,8 +63,7 @@ pub fn build_delivery_batches(
                     .checked_add(event.payload_bytes)
                     .is_some_and(|total| total <= max_payload_bytes)
         });
-        if append {
-            let batch = batches.last_mut().expect("batch exists");
+        if append && let Some(batch) = batches.last_mut() {
             batch.event_ids.push(id.to_owned());
             batch.payload_bytes += event.payload_bytes;
         } else {

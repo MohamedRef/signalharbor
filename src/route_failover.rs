@@ -20,6 +20,12 @@ pub struct FailoverPlan {
     pub unallocated: u64,
 }
 
+/// Allocates failed-route traffic to healthy endpoints in priority order.
+///
+/// # Errors
+///
+/// Returns validation for zero demand, blank endpoint identities, zero
+/// priorities, or duplicate endpoint identities.
 pub fn plan_route_failover(
     endpoints: &[FailoverEndpoint],
     deliveries: u64,

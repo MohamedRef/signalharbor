@@ -24,6 +24,12 @@ pub struct ReplayWindowAssessment {
     pub readiness: ReplayWindowReadiness,
 }
 
+/// Compares a replay request with payload and idempotency retention bounds.
+///
+/// # Errors
+///
+/// Returns validation when the route is blank or the requested window is not
+/// strictly increasing.
 pub fn assess_replay_window(
     request: &ReplayWindowRequest,
 ) -> Result<ReplayWindowAssessment, HarborError> {
