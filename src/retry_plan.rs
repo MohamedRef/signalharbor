@@ -46,7 +46,8 @@ pub fn plan_retries(started_at: u64, policy: RetryPolicy) -> Result<RetryPlan, H
             policy.jitter_basis_points,
             policy.jitter_seed,
             attempt,
-        );
+        )
+        .min(policy.max_delay_seconds);
         let candidate = due_at
             .checked_add(adjusted)
             .ok_or_else(|| HarborError::Validation("retry due time overflows timestamp".into()))?;

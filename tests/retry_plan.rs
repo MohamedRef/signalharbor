@@ -87,3 +87,22 @@ fn retry_policy_rejects_invalid_bounds_and_overflow() {
         Err(HarborError::Validation(_))
     ));
 }
+
+#[test]
+fn positive_jitter_never_exceeds_the_configured_delay_cap() {
+    let plan = plan_retries(
+        0,
+        RetryPolicy {
+            jitter_basis_points: 2_500,
+            jitter_seed: 6,
+            ..policy()
+        },
+    )
+    .unwrap();
+    assert!(
+        plan.slots
+            .iter()
+            .all(|slot| slot.delay_seconds <= policy().max_delay_seconds)
+    );
+    assert_eq!(plan.slots[3].delay_seconds, 60);
+}
