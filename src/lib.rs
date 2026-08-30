@@ -9,6 +9,7 @@ mod ingress;
 mod journal;
 mod model;
 mod redrive_throttle;
+mod replay_window;
 mod retention;
 mod retry_budget;
 mod retry_plan;
@@ -38,6 +39,9 @@ pub use model::{
 };
 pub use redrive_throttle::{
     RedriveCapacity, RedriveReadiness, RedriveThrottle, calculate_redrive_throttle,
+};
+pub use replay_window::{
+    ReplayWindowAssessment, ReplayWindowReadiness, ReplayWindowRequest, assess_replay_window,
 };
 pub use retention::{PayloadRecord, PayloadRetention, PayloadState, PurgeResult};
 pub use retry_budget::{RetryBudgetAllocation, RetryDemand, allocate_retry_budget};
