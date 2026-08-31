@@ -1,5 +1,6 @@
 mod casebook;
 mod clock_skew;
+mod credential_rotation;
 mod delivery_batch;
 mod endpoint_drain;
 mod endpoint_health;
@@ -21,6 +22,9 @@ mod slo;
 
 pub use casebook::{CaseDisposition, CaseStatus, DeadLetterCase, DeadLetterCasebook};
 pub use clock_skew::{ClockSkewAssessment, ClockSkewDecision, ClockSkewInput, assess_clock_skew};
+pub use credential_rotation::{
+    CredentialRotation, EndpointCredential, RotationReadiness, plan_credential_rotations,
+};
 pub use delivery_batch::{BatchEvent, DeliveryBatch, build_delivery_batches};
 pub use endpoint_drain::{DrainAssessment, DrainInput, DrainReadiness, assess_endpoint_drain};
 pub use endpoint_health::{EndpointHealth, EndpointHealthMonitor, EndpointStatus, ProbeOutcome};
