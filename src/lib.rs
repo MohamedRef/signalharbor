@@ -10,6 +10,7 @@ mod idempotency_horizon;
 mod ingress;
 mod journal;
 mod model;
+mod quarantine_capacity;
 mod redrive_throttle;
 mod replay_window;
 mod retention;
@@ -42,6 +43,9 @@ pub use model::{
     DeliveryState, EndpointUpdateMode, EndpointUpdateResult, HarborError, HarborSummary,
     IngestResult, Route, RouteCircuitHealth, RouteConcurrencyHealth, RouteMaintenance,
     TenantIngressFreeze, WebhookEvent, WebhookInput,
+};
+pub use quarantine_capacity::{
+    QuarantineCapacityBreach, QuarantinedEvent, TenantQuarantineLimit, assess_quarantine_capacity,
 };
 pub use redrive_throttle::{
     RedriveCapacity, RedriveReadiness, RedriveThrottle, calculate_redrive_throttle,
