@@ -1,4 +1,5 @@
 mod casebook;
+mod certificate_expiry;
 mod clock_skew;
 mod credential_rotation;
 mod delivery_batch;
@@ -22,6 +23,7 @@ mod signature_window;
 mod slo;
 
 pub use casebook::{CaseDisposition, CaseStatus, DeadLetterCase, DeadLetterCasebook};
+pub use certificate_expiry::{CertificateRenewal, EndpointCertificate, plan_certificate_renewals};
 pub use clock_skew::{ClockSkewAssessment, ClockSkewDecision, ClockSkewInput, assess_clock_skew};
 pub use credential_rotation::{
     CredentialRotation, EndpointCredential, RotationReadiness, plan_credential_rotations,
