@@ -22,6 +22,7 @@ mod route_failover;
 mod routing_preview;
 mod signature_window;
 mod slo;
+mod tenant_fairness;
 
 pub use casebook::{CaseDisposition, CaseStatus, DeadLetterCase, DeadLetterCasebook};
 pub use certificate_expiry::{CertificateRenewal, EndpointCertificate, plan_certificate_renewals};
@@ -68,3 +69,4 @@ pub use signature_window::{
 pub use slo::{
     DeliveryObservation, DeliverySloObjective, DeliverySloReport, evaluate_delivery_slo,
 };
+pub use tenant_fairness::{TenantFairnessBreach, TenantQueueDepth, assess_tenant_fairness};
