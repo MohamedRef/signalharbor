@@ -47,3 +47,11 @@ fn rejects_duplicate_endpoints() {
         Err(HarborError::Validation(_))
     ));
 }
+
+#[test]
+fn rejects_a_rotation_horizon_that_overflows() {
+    assert!(matches!(
+        plan_credential_rotations(&[], u64::MAX - 10, 11),
+        Err(HarborError::Validation(message)) if message.contains("timestamp range")
+    ));
+}

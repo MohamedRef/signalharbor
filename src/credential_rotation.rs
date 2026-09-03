@@ -38,7 +38,9 @@ pub fn plan_credential_rotations(
             "credential rotation horizon must be positive".into(),
         ));
     }
-    let horizon = as_of_epoch.saturating_add(horizon_seconds);
+    let horizon = as_of_epoch.checked_add(horizon_seconds).ok_or_else(|| {
+        HarborError::Validation("credential rotation horizon exceeds timestamp range".into())
+    })?;
     let mut seen = HashSet::new();
     let mut due = Vec::new();
     for row in rows {
