@@ -64,6 +64,33 @@ fn response(status_code: u16, retry_after_seconds: Option<u64>) -> DeliveryRespo
 }
 
 #[test]
+fn validated_header_response_flows_through_durable_recording() {
+    let (workspace, mut harbor, id) = setup(4);
+    let response = DeliveryResponse::from_retry_after(429, Some(" 75 ")).unwrap();
+    let result = harbor.record_response(&id, 100, response).unwrap();
+    assert_eq!(result.delivery.next_attempt_at, 175);
+    assert_eq!(result.retry_delay_seconds, Some(75));
+    let restored = SignalHarbor::open(workspace.journal()).unwrap();
+    assert_eq!(restored.delivery(&id).unwrap(), result.delivery);
+}
+
+#[test]
+fn validated_header_response_rejects_unsafe_combinations_before_recording() {
+    for (status, field) in [
+        (99, None),
+        (429, Some("Wed, 21 Oct 2015 07:28:00 GMT")),
+        (429, Some("86401")),
+        (204, Some("10")),
+        (404, Some("10")),
+    ] {
+        assert!(matches!(
+            DeliveryResponse::from_retry_after(status, field),
+            Err(HarborError::Validation(_))
+        ));
+    }
+}
+
+#[test]
 fn receiver_delay_is_persisted_with_the_attempt_and_survives_restart() {
     let (workspace, mut harbor, id) = setup(4);
     let result = harbor

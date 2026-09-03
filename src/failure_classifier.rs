@@ -40,6 +40,30 @@ pub fn parse_retry_after_delta(value: &str) -> Result<u64, HarborError> {
     Ok(seconds)
 }
 
+impl DeliveryResponse {
+    /// Builds a validated response from an optional raw `Retry-After` field.
+    ///
+    /// This accepts the portable delta-seconds form and rejects HTTP-date
+    /// values so callers cannot accidentally apply a delay using an unknown
+    /// clock. Status and retryability rules are validated before returning.
+    ///
+    /// # Errors
+    ///
+    /// Returns validation for an invalid HTTP status, malformed or excessive
+    /// delta, or a retry field attached to a non-retryable response.
+    pub fn from_retry_after(
+        status_code: u16,
+        retry_after: Option<&str>,
+    ) -> Result<Self, HarborError> {
+        let response = Self {
+            status_code,
+            retry_after_seconds: retry_after.map(parse_retry_after_delta).transpose()?,
+        };
+        classify_delivery_response(response)?;
+        Ok(response)
+    }
+}
+
 /// Classifies an HTTP delivery response without retrying permanent failures.
 ///
 /// # Errors
