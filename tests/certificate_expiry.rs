@@ -42,3 +42,18 @@ fn rejects_duplicate_endpoints() {
     };
     assert!(plan_certificate_renewals(&[row.clone(), row], 1_000).is_err());
 }
+
+#[test]
+fn treats_the_exact_expiry_instant_as_expired() {
+    let renewals = plan_certificate_renewals(
+        &[EndpointCertificate {
+            endpoint_id: "boundary".into(),
+            fingerprint: "aa".into(),
+            expires_at_epoch: 1_000,
+            renewal_lead_seconds: 100,
+        }],
+        1_000,
+    )
+    .expect("renewals");
+    assert!(renewals[0].expired);
+}

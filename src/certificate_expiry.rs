@@ -57,7 +57,7 @@ pub fn plan_certificate_renewals(
                 endpoint_id: endpoint_id.to_owned(),
                 fingerprint: fingerprint.to_owned(),
                 renew_by_epoch,
-                expired: row.expires_at_epoch < as_of_epoch,
+                expired: row.expires_at_epoch <= as_of_epoch,
             });
         }
     }
