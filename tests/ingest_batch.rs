@@ -179,6 +179,34 @@ fn empty_batch_does_not_create_a_journal() {
 }
 
 #[test]
+fn interrupted_batch_cannot_replay_only_its_complete_record_prefix() {
+    let (workspace, mut harbor) = seeded(0);
+    harbor
+        .ingest_batch(&[input("one", 1), input("two", 2)])
+        .unwrap();
+    let frame = fs::read_to_string(workspace.journal()).unwrap();
+    let prefix = frame.split(';').next().unwrap();
+    assert!(prefix.starts_with("T|E|"));
+    fs::write(workspace.journal(), prefix).unwrap();
+    assert!(
+        matches!(SignalHarbor::open(workspace.journal()), Err(HarborError::Journal(reason)) if reason.contains("incomplete transaction at line 1"))
+    );
+    assert_eq!(fs::read_to_string(workspace.journal()).unwrap(), prefix);
+}
+
+#[test]
+fn newline_complete_crlf_batch_remains_replayable() {
+    let (workspace, mut harbor) = seeded(1);
+    harbor
+        .ingest_batch(&[input("one", 1), input("two", 2)])
+        .unwrap();
+    let frames = fs::read_to_string(workspace.journal()).unwrap();
+    fs::write(workspace.journal(), frames.replace('\n', "\r\n")).unwrap();
+    let restored = SignalHarbor::open(workspace.journal()).unwrap();
+    assert_eq!(restored.summary(), harbor.summary());
+}
+
+#[test]
 fn frozen_new_ingress_rolls_back_batch_but_retained_duplicates_remain_safe() {
     let (workspace, mut harbor) = seeded(1);
     let original = harbor.ingest(input("retained", 1)).unwrap();

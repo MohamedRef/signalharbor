@@ -39,15 +39,31 @@ impl FileJournal {
             HarborError::Journal(format!("cannot open {}: {error}", self.path.display()))
         })?;
         let mut records = Vec::new();
-        for (index, line) in BufReader::new(file).lines().enumerate() {
-            let line = line.map_err(|error| {
-                HarborError::Journal(format!("cannot read line {}: {error}", index + 1))
+        let mut reader = BufReader::new(file);
+        for line_number in 1.. {
+            let mut frame = Vec::new();
+            let size = reader.read_until(b'\n', &mut frame).map_err(|error| {
+                HarborError::Journal(format!("cannot read line {line_number}: {error}"))
+            })?;
+            if size == 0 {
+                break;
+            }
+            if frame.pop() != Some(b'\n') {
+                return Err(HarborError::Journal(format!(
+                    "incomplete transaction at line {line_number}: missing newline terminator"
+                )));
+            }
+            if frame.last() == Some(&b'\r') {
+                frame.pop();
+            }
+            let line = String::from_utf8(frame).map_err(|error| {
+                HarborError::Journal(format!("invalid UTF-8 at line {line_number}: {error}"))
             })?;
             if line.is_empty() {
                 continue;
             }
             records.extend(decode_records(&line).map_err(|error| {
-                HarborError::Journal(format!("invalid line {}: {error}", index + 1))
+                HarborError::Journal(format!("invalid line {line_number}: {error}"))
             })?);
         }
         Ok(records)
