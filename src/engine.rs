@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
 mod ingest_batch;
+mod lease_renewal;
 
 use crate::journal::{FileJournal, Record};
 use crate::model::{

@@ -39,6 +39,10 @@ encoding. A malformed journal fails closed and identifies its line number.
 - Workers can relinquish a live claim without manufacturing an attempt. A
   release may defer work for at most one day, clears ownership durably, and
   returns the delivery to the deterministic due queue.
+- A long-running worker can extend a live claim with `renew_claim`, supplying
+  its observed expiry as a compare-and-set guard. Renewal cannot revive expired
+  ownership, shorten the deadline, or replace a newer claim; it survives replay
+  without creating a delivery attempt.
 - Every delivery attempt is journaled atomically with its resulting delivery
   snapshot, including worker, transport or HTTP outcome, retry schedule, and
   terminal state. Histories survive redrive and restart, and summaries expose
