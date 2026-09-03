@@ -36,7 +36,9 @@ pub use endpoint_health::{EndpointHealth, EndpointHealthMonitor, EndpointStatus,
 pub use engine::{
     DeliverySearchCursor, DeliverySearchPage, DeliverySearchQuery, DeliverySearchRow, SignalHarbor,
 };
-pub use failure_classifier::{DeliveryDisposition, DeliveryResponse, classify_delivery_response};
+pub use failure_classifier::{
+    DeliveryDisposition, DeliveryResponse, classify_delivery_response, parse_retry_after_delta,
+};
 pub use idempotency_horizon::{
     HorizonAssessment, HorizonReadiness, IdempotencyHorizon, assess_idempotency_horizon,
 };

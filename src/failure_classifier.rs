@@ -13,6 +13,33 @@ pub enum DeliveryDisposition {
     Drop,
 }
 
+/// Parses the delta-seconds form of an HTTP `Retry-After` field.
+///
+/// Optional whitespace is accepted, while HTTP-date values, signs, fractions,
+/// and delays beyond the one-day delivery-policy limit are rejected.
+///
+/// # Errors
+///
+/// Returns validation when the field is empty, is not unsigned decimal
+/// delta-seconds, overflows, or exceeds 86,400 seconds.
+pub fn parse_retry_after_delta(value: &str) -> Result<u64, HarborError> {
+    let value = value.trim();
+    if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(HarborError::Validation(
+            "retry-after must be unsigned delta-seconds".into(),
+        ));
+    }
+    let seconds = value.parse::<u64>().map_err(|_| {
+        HarborError::Validation("retry-after delta-seconds exceeds numeric range".into())
+    })?;
+    if seconds > 86_400 {
+        return Err(HarborError::Validation(
+            "retry-after cannot exceed one day".into(),
+        ));
+    }
+    Ok(seconds)
+}
+
 /// Classifies an HTTP delivery response without retrying permanent failures.
 ///
 /// # Errors
