@@ -4,7 +4,7 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use signalharbor::{DeliveryState, HarborError, Route, SignalHarbor, WebhookInput};
+use signalharbor::{AttemptOutcome, DeliveryState, HarborError, Route, SignalHarbor, WebhookInput};
 
 static SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
@@ -94,6 +94,56 @@ fn hold_removes_delivery_from_due_and_claim_queues_until_expiry() {
         harbor.due_deliveries(200, 10).expect("due after expiry")[0].id,
         delivery_id
     );
+}
+
+#[test]
+fn direct_attempts_cannot_bypass_an_active_hold_even_after_restart() {
+    let (journal, mut harbor, delivery_id) = seeded("attempt-gate");
+    harbor
+        .hold_delivery(&delivery_id, "operator", "receiver investigation", 110, 200)
+        .unwrap();
+    let before = fs::read(journal.path()).unwrap();
+    let delivery = harbor.delivery(&delivery_id).unwrap();
+    let routes = harbor.routes();
+    for at in [110, 150, 199] {
+        let mut reopened = SignalHarbor::open(journal.path()).unwrap();
+        assert!(matches!(
+            reopened.record_attempt(&delivery_id, at, AttemptOutcome::Http(503)),
+            Err(HarborError::Conflict(message)) if message.contains("hold")
+        ));
+        assert_eq!(reopened.delivery(&delivery_id).unwrap(), delivery);
+        assert_eq!(reopened.routes(), routes);
+        assert!(reopened.attempt_history(&delivery_id).unwrap().is_empty());
+        assert_eq!(fs::read(journal.path()).unwrap(), before);
+    }
+    let result = harbor
+        .record_attempt(&delivery_id, 200, AttemptOutcome::Http(204))
+        .unwrap();
+    assert_eq!(result.delivery.state, DeliveryState::Succeeded);
+}
+
+#[test]
+fn explicit_hold_release_restores_direct_and_claimed_attempt_admission() {
+    let (_journal, mut harbor, delivery_id) = seeded("attempt-release");
+    harbor
+        .hold_delivery(&delivery_id, "operator", "receiver investigation", 110, 300)
+        .unwrap();
+    assert!(matches!(
+        harbor.record_attempt(&delivery_id, 159, AttemptOutcome::Http(204)),
+        Err(HarborError::Conflict(_))
+    ));
+    harbor
+        .release_delivery_hold(&delivery_id, "reviewer", 160)
+        .unwrap();
+    let retry = harbor
+        .record_attempt(&delivery_id, 160, AttemptOutcome::Http(503))
+        .unwrap();
+    assert!(retry.retried);
+    harbor.claim_due("worker", 170, 1, 30).unwrap();
+    let result = harbor
+        .record_claimed_attempt(&delivery_id, "worker", 171, AttemptOutcome::Http(204))
+        .unwrap();
+    assert_eq!(result.delivery.state, DeliveryState::Succeeded);
 }
 
 #[test]

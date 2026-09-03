@@ -4,6 +4,7 @@ use std::path::Path;
 mod delivery_search;
 mod ingest_batch;
 mod lease_renewal;
+mod response_recording;
 
 pub use delivery_search::{
     DeliverySearchCursor, DeliverySearchPage, DeliverySearchQuery, DeliverySearchRow,
@@ -1177,7 +1178,7 @@ impl SignalHarbor {
         outcome: AttemptOutcome,
     ) -> Result<AttemptResult, HarborError> {
         let worker = crate::model::required(worker, "worker", 120)?;
-        self.record_attempt_internal(delivery_id, attempted_at, outcome, Some(&worker))
+        self.record_attempt_internal(delivery_id, attempted_at, outcome, Some(&worker), None)
     }
 
     /// Applies an HTTP or transport outcome and persists the resulting state.
@@ -1192,7 +1193,7 @@ impl SignalHarbor {
         attempted_at: u64,
         outcome: AttemptOutcome,
     ) -> Result<AttemptResult, HarborError> {
-        self.record_attempt_internal(delivery_id, attempted_at, outcome, None)
+        self.record_attempt_internal(delivery_id, attempted_at, outcome, None, None)
     }
 
     fn record_attempt_internal(
@@ -1201,37 +1202,16 @@ impl SignalHarbor {
         attempted_at: u64,
         outcome: AttemptOutcome,
         required_worker: Option<&str>,
+        retry_after_seconds: Option<u64>,
     ) -> Result<AttemptResult, HarborError> {
+        if let AttemptOutcome::Http(status_code) = &outcome {
+            crate::classify_delivery_response(crate::DeliveryResponse {
+                status_code: *status_code,
+                retry_after_seconds,
+            })?;
+        }
         let current = self.delivery(delivery_id)?;
-        if current.state != DeliveryState::Pending {
-            return Err(HarborError::Conflict(format!(
-                "delivery {delivery_id} is already terminal"
-            )));
-        }
-        if current.next_attempt_at > attempted_at {
-            return Err(HarborError::NotDue {
-                delivery_id: delivery_id.to_owned(),
-                due_at: current.next_attempt_at,
-            });
-        }
-        match required_worker {
-            Some(worker)
-                if current.lease_owner.as_deref() != Some(worker)
-                    || current
-                        .lease_expires_at
-                        .is_none_or(|expires_at| expires_at <= attempted_at) =>
-            {
-                return Err(HarborError::Conflict(format!(
-                    "worker {worker} does not own a live lease for delivery {delivery_id}"
-                )));
-            }
-            None if current.leased(attempted_at) => {
-                return Err(HarborError::Conflict(format!(
-                    "delivery {delivery_id} has an active worker lease"
-                )));
-            }
-            _ => {}
-        }
+        self.validate_attempt_admission(&current, delivery_id, attempted_at, required_worker)?;
         let mut route = self.route_for_attempt(&current.route_id, attempted_at)?;
         let previous_route = route.clone();
         let mut updated = current;
@@ -1251,7 +1231,8 @@ impl SignalHarbor {
             let delay = route
                 .base_delay_seconds
                 .saturating_mul(1_u64 << exponent)
-                .min(86_400);
+                .min(86_400)
+                .max(retry_after_seconds.unwrap_or(0));
             updated.next_attempt_at = attempted_at.checked_add(delay).ok_or_else(|| {
                 HarborError::Validation("retry due time exceeds timestamp range".into())
             })?;
@@ -1298,6 +1279,48 @@ impl SignalHarbor {
             retried,
             retry_delay_seconds,
         })
+    }
+
+    fn validate_attempt_admission(
+        &self,
+        current: &Delivery,
+        delivery_id: &str,
+        attempted_at: u64,
+        required_worker: Option<&str>,
+    ) -> Result<(), HarborError> {
+        if current.state != DeliveryState::Pending {
+            return Err(HarborError::Conflict(format!(
+                "delivery {delivery_id} is already terminal"
+            )));
+        }
+        if current.next_attempt_at > attempted_at {
+            return Err(HarborError::NotDue {
+                delivery_id: delivery_id.to_owned(),
+                due_at: current.next_attempt_at,
+            });
+        }
+        if let Some(hold) = self.active_hold(delivery_id, attempted_at) {
+            return Err(HarborError::Conflict(format!(
+                "delivery {delivery_id} is on hold {} until {}",
+                hold.id, hold.release_at
+            )));
+        }
+        match required_worker {
+            Some(worker)
+                if current.lease_owner.as_deref() != Some(worker)
+                    || current
+                        .lease_expires_at
+                        .is_none_or(|expires_at| expires_at <= attempted_at) =>
+            {
+                Err(HarborError::Conflict(format!(
+                    "worker {worker} does not own a live lease for delivery {delivery_id}"
+                )))
+            }
+            None if current.leased(attempted_at) => Err(HarborError::Conflict(format!(
+                "delivery {delivery_id} has an active worker lease"
+            ))),
+            _ => Ok(()),
+        }
     }
 
     /// Resets a dead-letter delivery for another attempt at `due_at`.

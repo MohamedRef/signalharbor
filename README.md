@@ -25,6 +25,10 @@ encoding. A malformed journal fails closed and identifies its line number.
   10,000 new deliveries; empty and duplicate-only batches do not append.
 - HTTP 408, 425, 429, 5xx, and transport errors receive capped exponential
   backoff. Other non-2xx HTTP results go directly to dead letter.
+- `record_response` and `record_claimed_response` durably apply a parsed
+  receiver `Retry-After` delay of at most one day. The longer of that delay and
+  route backoff wins; receiver advice never extends the attempt budget. Invalid
+  HTTP status codes are rejected by every attempt-recording entry point.
 - A route controls its maximum attempts and base delay. Route deactivation
   stops new deliveries without discarding already journaled work.
 - Dead letters can be redriven only while their route is active.
