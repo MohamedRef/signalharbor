@@ -38,3 +38,25 @@ fn empty_queue_has_no_fairness_breaches() {
     .expect("fairness");
     assert!(result.is_empty());
 }
+
+#[test]
+fn measures_large_queue_shares_without_saturating() {
+    let lower_half = u64::MAX / 2;
+    let upper_half = u64::MAX - lower_half;
+    let breaches = assess_tenant_fairness(&[
+        TenantQueueDepth {
+            tenant_id: "lower".into(),
+            pending: lower_half,
+            maximum_share_per_mille: 100,
+        },
+        TenantQueueDepth {
+            tenant_id: "upper".into(),
+            pending: upper_half,
+            maximum_share_per_mille: 100,
+        },
+    ])
+    .expect("large queue assessment");
+    assert_eq!(breaches.len(), 2);
+    assert_eq!(breaches[0].actual_share_per_mille, 501);
+    assert_eq!(breaches[1].actual_share_per_mille, 500);
+}

@@ -49,7 +49,8 @@ pub fn assess_tenant_fairness(
     }
     let mut breaches = Vec::new();
     for row in rows {
-        let actual = row.pending.saturating_mul(1_000).div_ceil(total);
+        let numerator = u128::from(row.pending) * 1_000;
+        let actual = numerator.div_ceil(u128::from(total));
         let actual_share_per_mille = u16::try_from(actual).unwrap_or(1_000);
         if actual_share_per_mille > row.maximum_share_per_mille {
             breaches.push(TenantFairnessBreach {
