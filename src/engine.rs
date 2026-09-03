@@ -1,6 +1,8 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
+mod ingest_batch;
+
 use crate::journal::{FileJournal, Record};
 use crate::model::{
     AttemptHistorySummary, AttemptOutcome, AttemptResult, BackfillRequest, BackfillResult,
@@ -625,86 +627,9 @@ impl SignalHarbor {
     /// Returns [`HarborError::Conflict`] when a dedupe key is reused with
     /// different content, or a journal error when persistence fails.
     pub fn ingest(&mut self, input: WebhookInput) -> Result<IngestResult, HarborError> {
-        let dedupe_key = (input.tenant.clone(), input.dedupe_key.clone());
-        if let Some(existing_id) = self.dedupe.get(&dedupe_key) {
-            let existing = self.events.get(existing_id).ok_or_else(|| {
-                HarborError::Journal("dedupe index references a missing event".into())
-            })?;
-            if existing.topic != input.topic || existing.body != input.body {
-                return Err(HarborError::Conflict(format!(
-                    "dedupe key {} was already used with different content",
-                    input.dedupe_key
-                )));
-            }
-            return Ok(IngestResult {
-                event: existing.clone(),
-                duplicate: true,
-                delivery_ids: self.delivery_ids_for_event(&existing.id),
-            });
-        }
-
-        if let Some(freeze) = self.active_ingress_freeze(&input.tenant, input.received_at) {
-            return Err(HarborError::Conflict(format!(
-                "tenant {} ingress is frozen until {} by {}",
-                input.tenant, freeze.expires_at, freeze.id
-            )));
-        }
-
-        let event_sequence = self.event_sequence + 1;
-        let event = WebhookEvent {
-            id: format!("evt-{event_sequence:012}"),
-            tenant: input.tenant,
-            topic: input.topic,
-            dedupe_key: input.dedupe_key,
-            body: input.body,
-            received_at: input.received_at,
-        };
-        let matching_routes = self
-            .routes
-            .values()
-            .filter(|route| route.matches(&event.tenant, &event.topic))
-            .cloned()
-            .collect::<Vec<_>>();
-        let mut next_delivery_sequence = self.delivery_sequence;
-        let deliveries = matching_routes
-            .into_iter()
-            .map(|route| {
-                next_delivery_sequence += 1;
-                Delivery {
-                    id: format!("del-{next_delivery_sequence:012}"),
-                    event_id: event.id.clone(),
-                    route_id: route.id,
-                    endpoint: route.endpoint,
-                    state: DeliveryState::Pending,
-                    attempts: 0,
-                    next_attempt_at: event.received_at,
-                    last_error: None,
-                    lease_owner: None,
-                    lease_expires_at: None,
-                }
-            })
-            .collect::<Vec<_>>();
-
-        let mut records = vec![Record::Event(event.clone())];
-        records.extend(deliveries.iter().cloned().map(Record::Delivery));
-        self.journal.append_batch(&records)?;
-
-        self.event_sequence = event_sequence;
-        self.delivery_sequence = next_delivery_sequence;
-        self.dedupe.insert(dedupe_key, event.id.clone());
-        self.events.insert(event.id.clone(), event.clone());
-        let delivery_ids = deliveries
-            .iter()
-            .map(|delivery| delivery.id.clone())
-            .collect::<Vec<_>>();
-        for delivery in deliveries {
-            self.deliveries.insert(delivery.id.clone(), delivery);
-        }
-        Ok(IngestResult {
-            event,
-            duplicate: false,
-            delivery_ids,
-        })
+        self.ingest_batch(&[input])?
+            .pop()
+            .ok_or_else(|| HarborError::Journal("single ingestion produced no result".into()))
     }
 
     /// Creates deliveries for historical events that match a route but were not routed earlier.

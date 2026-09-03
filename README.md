@@ -18,6 +18,11 @@ encoding. A malformed journal fails closed and identifies its line number.
 - Exact topics and trailing wildcards such as `orders.*` are supported.
 - Dedupe keys are isolated by tenant; an identical replay is idempotent, while
   reuse with a different topic or body is rejected.
+- Provider batches use `ingest_batch` to validate and persist all new events
+  and their routed deliveries in one transaction. Input order and same-batch
+  duplicate receipts are preserved; a conflict, freeze, or invalid member
+  rejects the whole batch. Bounds are 1,000 inputs, 16 MiB of body data and
+  10,000 new deliveries; empty and duplicate-only batches do not append.
 - HTTP 408, 425, 429, 5xx, and transport errors receive capped exponential
   backoff. Other non-2xx HTTP results go directly to dead letter.
 - A route controls its maximum attempts and base delay. Route deactivation
