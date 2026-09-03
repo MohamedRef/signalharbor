@@ -33,6 +33,11 @@ encoding. A malformed journal fails closed and identifies its line number.
   history, and reports truncation plus remaining dead letters.
 - Due queues and summaries are deterministic, making worker behavior easy to
   test and monitor.
+- `search_deliveries` inspects a tenant's pending and terminal work without
+  returning webhook bodies. Route, topic, state and inclusive receive-time
+  filters compose; opaque continuations preserve receive-time/id ordering and
+  exclude new ingress or backfill after the first page. Existing status and
+  lease metadata stay live, so pagination is not a full historical snapshot.
 - Workers can atomically claim due deliveries with durable, expiring leases.
   Only the lease owner can report the attempt while it is live; after expiry,
   another worker can recover the delivery without manual journal repair.

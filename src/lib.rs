@@ -33,7 +33,9 @@ pub use credential_rotation::{
 pub use delivery_batch::{BatchEvent, DeliveryBatch, build_delivery_batches};
 pub use endpoint_drain::{DrainAssessment, DrainInput, DrainReadiness, assess_endpoint_drain};
 pub use endpoint_health::{EndpointHealth, EndpointHealthMonitor, EndpointStatus, ProbeOutcome};
-pub use engine::SignalHarbor;
+pub use engine::{
+    DeliverySearchCursor, DeliverySearchPage, DeliverySearchQuery, DeliverySearchRow, SignalHarbor,
+};
 pub use failure_classifier::{DeliveryDisposition, DeliveryResponse, classify_delivery_response};
 pub use idempotency_horizon::{
     HorizonAssessment, HorizonReadiness, IdempotencyHorizon, assess_idempotency_horizon,

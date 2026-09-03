@@ -1,8 +1,13 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
+mod delivery_search;
 mod ingest_batch;
 mod lease_renewal;
+
+pub use delivery_search::{
+    DeliverySearchCursor, DeliverySearchPage, DeliverySearchQuery, DeliverySearchRow,
+};
 
 use crate::journal::{FileJournal, Record};
 use crate::model::{
