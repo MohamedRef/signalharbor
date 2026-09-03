@@ -23,3 +23,11 @@ jobs:
         env:
           RUSTDOCFLAGS: -D warnings
       - run: docker build --tag signalharbor-dependencies .
+      - name: Verify checkout in the offline dependency environment
+        run: >-
+          docker run --rm --network none
+          --mount "type=bind,source=${{ github.workspace }},target=/app,readonly"
+          --env CARGO_TARGET_DIR=/validation-target --env CARGO_BUILD_JOBS=1
+          --env CARGO_PROFILE_TEST_DEBUG=0 --env CARGO_PROFILE_DEV_DEBUG=0
+          --env CARGO_INCREMENTAL=0
+          --workdir /app signalharbor-dependencies cargo test --locked --offline
