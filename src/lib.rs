@@ -13,6 +13,7 @@ mod ingress;
 mod journal;
 mod model;
 mod quarantine_capacity;
+mod receiver_capacity;
 mod redrive_throttle;
 mod replay_window;
 mod retention;
@@ -58,6 +59,10 @@ pub use model::{
 };
 pub use quarantine_capacity::{
     QuarantineCapacityBreach, QuarantinedEvent, TenantQuarantineLimit, assess_quarantine_capacity,
+};
+pub use receiver_capacity::{
+    ReceiverCapacityAssessment, ReceiverCapacityInput, ReceiverCapacityState,
+    assess_receiver_capacity,
 };
 pub use redrive_throttle::{
     RedriveCapacity, RedriveReadiness, RedriveThrottle, calculate_redrive_throttle,
