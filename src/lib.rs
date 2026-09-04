@@ -6,6 +6,7 @@ mod credential_rotation;
 mod dead_letter_export;
 mod deduplication_audit;
 mod delivery_batch;
+mod delivery_concurrency;
 mod delivery_deadline;
 mod endpoint_drain;
 mod endpoint_health;
@@ -51,6 +52,9 @@ pub use dead_letter_export::{
 };
 pub use deduplication_audit::{DedupeKeyAudit, DedupeObservation, audit_deduplication};
 pub use delivery_batch::{BatchEvent, DeliveryBatch, build_delivery_batches};
+pub use delivery_concurrency::{
+    DeliveryConcurrencyPlan, RouteDeliveryDemand, WorkerPoolCapacity, plan_delivery_concurrency,
+};
 pub use delivery_deadline::{
     DeliveryDeadlineAssessment, DeliveryDeadlineInput, DeliveryUrgency, assess_delivery_deadlines,
 };
