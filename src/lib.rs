@@ -17,6 +17,7 @@ mod journal;
 mod model;
 mod payload_size;
 mod quarantine_capacity;
+mod quarantine_release;
 mod receiver_capacity;
 mod redrive_throttle;
 mod replay_window;
@@ -78,6 +79,10 @@ pub use payload_size::{
 };
 pub use quarantine_capacity::{
     QuarantineCapacityBreach, QuarantinedEvent, TenantQuarantineLimit, assess_quarantine_capacity,
+};
+pub use quarantine_release::{
+    QuarantineReleaseAllocation, QuarantineReleaseRequest, ReleaseCapacity,
+    allocate_quarantine_releases,
 };
 pub use receiver_capacity::{
     ReceiverCapacityAssessment, ReceiverCapacityInput, ReceiverCapacityState,

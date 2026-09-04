@@ -30,6 +30,10 @@ pub struct TenantBurstAssessment {
 }
 
 /// Assesses tenant ingress bursts without allowing arithmetic overflow.
+///
+/// # Errors
+///
+/// Rejects invalid limits, duplicate tenants, unknown samples, and overflow.
 pub fn assess_tenant_bursts(
     limits: &[TenantBurstLimit],
     samples: &[TenantBurstSample],

@@ -30,6 +30,10 @@ pub struct SigningOverlapAssessment {
 }
 
 /// Verifies that each route rotates signing keys with a safe verification overlap.
+///
+/// # Errors
+///
+/// Rejects invalid policies, unknown routes, duplicate keys, and inverted windows.
 pub fn assess_signing_overlap(
     policies: &[SigningOverlapPolicy],
     windows: &[SigningKeyWindow],
@@ -70,7 +74,11 @@ pub fn assess_signing_overlap(
     }
     let mut rows = Vec::new();
     for (route_key, mut keys) in by_route {
-        let (route, minimum) = configured.get(&route_key).expect("route validated");
+        let Some((route, minimum)) = configured.get(&route_key) else {
+            return Err(HarborError::Validation(format!(
+                "route {route_key} lost its signing policy"
+            )));
+        };
         keys.sort_by_key(|row| row.1);
         for pair in keys.windows(2) {
             let retiring = &pair[0];
