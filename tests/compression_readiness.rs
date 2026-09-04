@@ -53,7 +53,7 @@ fn rejects_unsupported_encodings_and_aliased_routes() {
     };
     let mut unsupported = sample("event", 10, 5);
     unsupported.encoding = "br".into();
-    assert!(assess_compression_readiness(&[policy.clone()], &[unsupported]).is_err());
+    assert!(assess_compression_readiness(std::slice::from_ref(&policy), &[unsupported]).is_err());
     assert!(matches!(
         assess_compression_readiness(
             &[

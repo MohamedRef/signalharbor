@@ -36,16 +36,11 @@ pub struct CompressionAssessment {
     pub savings_basis_points: u16,
 }
 
-/// Checks whether negotiated webhook compression is safe and worthwhile.
-///
-/// # Errors
-///
-/// Rejects duplicate identities, unsupported encodings, zero sizes, or policy
-/// controls outside their valid ranges.
-pub fn assess_compression_readiness(
+type CompressionPolicyIndex = BTreeMap<String, (String, BTreeSet<String>, u64, u16)>;
+
+fn index_compression_policies(
     policies: &[CompressionPolicy],
-    samples: &[CompressionSample],
-) -> Result<Vec<CompressionAssessment>, HarborError> {
+) -> Result<CompressionPolicyIndex, HarborError> {
     let mut routes = BTreeMap::new();
     for policy in policies {
         let route_id = policy.route_id.trim();
@@ -88,6 +83,20 @@ pub fn assess_compression_readiness(
             ),
         );
     }
+    Ok(routes)
+}
+
+/// Checks whether negotiated webhook compression is safe and worthwhile.
+///
+/// # Errors
+///
+/// Rejects duplicate identities, unsupported encodings, zero sizes, or policy
+/// controls outside their valid ranges.
+pub fn assess_compression_readiness(
+    policies: &[CompressionPolicy],
+    samples: &[CompressionSample],
+) -> Result<Vec<CompressionAssessment>, HarborError> {
+    let routes = index_compression_policies(policies)?;
     let mut identities = BTreeSet::new();
     let mut rows = Vec::with_capacity(samples.len());
     for sample in samples {
