@@ -32,6 +32,7 @@ mod retry_saturation;
 mod route_failover;
 mod route_fanout;
 mod routing_preview;
+mod schema_drift;
 mod signature_window;
 mod signing_overlap;
 mod slo;
@@ -116,6 +117,9 @@ pub use retry_saturation::{RetryQueueSample, RetrySaturation, detect_retry_satur
 pub use route_failover::{FailoverAllocation, FailoverEndpoint, FailoverPlan, plan_route_failover};
 pub use route_fanout::{FanoutAssessment, FanoutPolicy, RouteFanoutSample, assess_route_fanout};
 pub use routing_preview::{RouteMatch, RoutePreview, preview_routes};
+pub use schema_drift::{
+    RouteSchemaPolicy, SchemaDriftFinding, SchemaObservation, detect_schema_drift,
+};
 pub use signature_window::{
     SignatureAssessment, SignatureFreshness, SignatureWindow, assess_signature_window,
 };
