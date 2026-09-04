@@ -26,6 +26,7 @@ mod redrive_throttle;
 mod replay_window;
 mod retention;
 mod retry_budget;
+mod retry_ceiling;
 mod retry_plan;
 mod retry_saturation;
 mod route_failover;
@@ -109,6 +110,7 @@ pub use replay_window::{
 };
 pub use retention::{PayloadRecord, PayloadRetention, PayloadState, PurgeResult};
 pub use retry_budget::{RetryBudgetAllocation, RetryDemand, allocate_retry_budget};
+pub use retry_ceiling::{RetryCeilingPolicy, RetryCeilingStep, build_retry_ceiling};
 pub use retry_plan::{RetryPlan, RetryPolicy, RetrySlot, plan_retries};
 pub use retry_saturation::{RetryQueueSample, RetrySaturation, detect_retry_saturation};
 pub use route_failover::{FailoverAllocation, FailoverEndpoint, FailoverPlan, plan_route_failover};
