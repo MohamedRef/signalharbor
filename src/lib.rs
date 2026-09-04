@@ -28,6 +28,7 @@ mod retry_budget;
 mod retry_plan;
 mod retry_saturation;
 mod route_failover;
+mod route_fanout;
 mod routing_preview;
 mod signature_window;
 mod signing_overlap;
@@ -107,6 +108,7 @@ pub use retry_budget::{RetryBudgetAllocation, RetryDemand, allocate_retry_budget
 pub use retry_plan::{RetryPlan, RetryPolicy, RetrySlot, plan_retries};
 pub use retry_saturation::{RetryQueueSample, RetrySaturation, detect_retry_saturation};
 pub use route_failover::{FailoverAllocation, FailoverEndpoint, FailoverPlan, plan_route_failover};
+pub use route_fanout::{FanoutAssessment, FanoutPolicy, RouteFanoutSample, assess_route_fanout};
 pub use routing_preview::{RouteMatch, RoutePreview, preview_routes};
 pub use signature_window::{
     SignatureAssessment, SignatureFreshness, SignatureWindow, assess_signature_window,
