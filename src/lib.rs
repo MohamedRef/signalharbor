@@ -7,6 +7,7 @@ mod delivery_batch;
 mod delivery_deadline;
 mod endpoint_drain;
 mod endpoint_health;
+mod endpoint_migration;
 mod engine;
 mod failure_classifier;
 mod idempotency_horizon;
@@ -41,6 +42,10 @@ pub use delivery_deadline::{
 };
 pub use endpoint_drain::{DrainAssessment, DrainInput, DrainReadiness, assess_endpoint_drain};
 pub use endpoint_health::{EndpointHealth, EndpointHealthMonitor, EndpointStatus, ProbeOutcome};
+pub use endpoint_migration::{
+    EndpointMigrationAssessment, EndpointMigrationInput, EndpointMigrationReadiness,
+    assess_endpoint_migrations,
+};
 pub use engine::{
     DeliverySearchCursor, DeliverySearchPage, DeliverySearchQuery, DeliverySearchRow, SignalHarbor,
 };
