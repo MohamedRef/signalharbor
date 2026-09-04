@@ -1,6 +1,7 @@
 mod casebook;
 mod certificate_expiry;
 mod clock_skew;
+mod compression_readiness;
 mod credential_rotation;
 mod deduplication_audit;
 mod delivery_batch;
@@ -32,6 +33,10 @@ mod tenant_fairness;
 pub use casebook::{CaseDisposition, CaseStatus, DeadLetterCase, DeadLetterCasebook};
 pub use certificate_expiry::{CertificateRenewal, EndpointCertificate, plan_certificate_renewals};
 pub use clock_skew::{ClockSkewAssessment, ClockSkewDecision, ClockSkewInput, assess_clock_skew};
+pub use compression_readiness::{
+    CompressionAssessment, CompressionPolicy, CompressionReadiness, CompressionSample,
+    assess_compression_readiness,
+};
 pub use credential_rotation::{
     CredentialRotation, EndpointCredential, RotationReadiness, plan_credential_rotations,
 };
