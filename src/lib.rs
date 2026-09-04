@@ -13,6 +13,7 @@ mod idempotency_horizon;
 mod ingress;
 mod journal;
 mod model;
+mod payload_size;
 mod quarantine_capacity;
 mod receiver_capacity;
 mod redrive_throttle;
@@ -58,6 +59,10 @@ pub use model::{
     DeliveryState, EndpointUpdateMode, EndpointUpdateResult, HarborError, HarborSummary,
     IngestResult, Route, RouteCircuitHealth, RouteConcurrencyHealth, RouteMaintenance,
     TenantIngressFreeze, WebhookEvent, WebhookInput,
+};
+pub use payload_size::{
+    PayloadSizeAssessment, PayloadSizePolicy, PayloadSizeReadiness, WebhookPayloadSample,
+    assess_payload_sizes,
 };
 pub use quarantine_capacity::{
     QuarantineCapacityBreach, QuarantinedEvent, TenantQuarantineLimit, assess_quarantine_capacity,
