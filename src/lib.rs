@@ -9,6 +9,7 @@ mod deduplication_audit;
 mod delivery_batch;
 mod delivery_concurrency;
 mod delivery_deadline;
+mod delivery_signature_freshness;
 mod endpoint_drain;
 mod endpoint_health;
 mod endpoint_migration;
@@ -65,6 +66,9 @@ pub use delivery_concurrency::{
 };
 pub use delivery_deadline::{
     DeliveryDeadlineAssessment, DeliveryDeadlineInput, DeliveryUrgency, assess_delivery_deadlines,
+};
+pub use delivery_signature_freshness::{
+    DeliverySignature, SignatureFreshnessAssessment, assess_delivery_signature_freshness,
 };
 pub use endpoint_drain::{DrainAssessment, DrainInput, DrainReadiness, assess_endpoint_drain};
 pub use endpoint_health::{EndpointHealth, EndpointHealthMonitor, EndpointStatus, ProbeOutcome};
