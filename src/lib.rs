@@ -27,6 +27,7 @@ mod retry_saturation;
 mod route_failover;
 mod routing_preview;
 mod signature_window;
+mod signing_overlap;
 mod slo;
 mod tenant_burst;
 mod tenant_fairness;
@@ -96,6 +97,10 @@ pub use route_failover::{FailoverAllocation, FailoverEndpoint, FailoverPlan, pla
 pub use routing_preview::{RouteMatch, RoutePreview, preview_routes};
 pub use signature_window::{
     SignatureAssessment, SignatureFreshness, SignatureWindow, assess_signature_window,
+};
+pub use signing_overlap::{
+    SigningKeyWindow, SigningOverlapAssessment, SigningOverlapPolicy, SigningOverlapReadiness,
+    assess_signing_overlap,
 };
 pub use slo::{
     DeliveryObservation, DeliverySloObjective, DeliverySloReport, evaluate_delivery_slo,
