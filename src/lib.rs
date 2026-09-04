@@ -3,6 +3,7 @@ mod certificate_expiry;
 mod clock_skew;
 mod credential_rotation;
 mod delivery_batch;
+mod delivery_deadline;
 mod endpoint_drain;
 mod endpoint_health;
 mod engine;
@@ -31,6 +32,9 @@ pub use credential_rotation::{
     CredentialRotation, EndpointCredential, RotationReadiness, plan_credential_rotations,
 };
 pub use delivery_batch::{BatchEvent, DeliveryBatch, build_delivery_batches};
+pub use delivery_deadline::{
+    DeliveryDeadlineAssessment, DeliveryDeadlineInput, DeliveryUrgency, assess_delivery_deadlines,
+};
 pub use endpoint_drain::{DrainAssessment, DrainInput, DrainReadiness, assess_endpoint_drain};
 pub use endpoint_health::{EndpointHealth, EndpointHealthMonitor, EndpointStatus, ProbeOutcome};
 pub use engine::{
