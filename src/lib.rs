@@ -31,6 +31,7 @@ mod retry_budget;
 mod retry_ceiling;
 mod retry_plan;
 mod retry_saturation;
+mod route_drain_capacity;
 mod route_failover;
 mod route_fanout;
 mod routing_preview;
@@ -122,6 +123,7 @@ pub use retry_budget::{RetryBudgetAllocation, RetryDemand, allocate_retry_budget
 pub use retry_ceiling::{RetryCeilingPolicy, RetryCeilingStep, build_retry_ceiling};
 pub use retry_plan::{RetryPlan, RetryPolicy, RetrySlot, plan_retries};
 pub use retry_saturation::{RetryQueueSample, RetrySaturation, detect_retry_saturation};
+pub use route_drain_capacity::{DrainCapacity, DrainDemand, DrainPlan, plan_route_drain_capacity};
 pub use route_failover::{FailoverAllocation, FailoverEndpoint, FailoverPlan, plan_route_failover};
 pub use route_fanout::{FanoutAssessment, FanoutPolicy, RouteFanoutSample, assess_route_fanout};
 pub use routing_preview::{RouteMatch, RoutePreview, preview_routes};
