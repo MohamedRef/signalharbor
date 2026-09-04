@@ -20,6 +20,7 @@ mod payload_size;
 mod quarantine_capacity;
 mod quarantine_release;
 mod receiver_capacity;
+mod receiver_tls_policy;
 mod redrive_throttle;
 mod replay_window;
 mod retention;
@@ -91,6 +92,9 @@ pub use quarantine_release::{
 pub use receiver_capacity::{
     ReceiverCapacityAssessment, ReceiverCapacityInput, ReceiverCapacityState,
     assess_receiver_capacity,
+};
+pub use receiver_tls_policy::{
+    ReceiverTlsAssessment, ReceiverTlsPolicy, ReceiverTlsProbe, TlsReadiness, assess_receiver_tls,
 };
 pub use redrive_throttle::{
     RedriveCapacity, RedriveReadiness, RedriveThrottle, calculate_redrive_throttle,
