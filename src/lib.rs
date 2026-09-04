@@ -42,6 +42,7 @@ mod signing_overlap;
 mod slo;
 mod tenant_burst;
 mod tenant_fairness;
+mod tenant_quota_forecast;
 
 pub use casebook::{CaseDisposition, CaseStatus, DeadLetterCase, DeadLetterCasebook};
 pub use certificate_expiry::{CertificateRenewal, EndpointCertificate, plan_certificate_renewals};
@@ -149,3 +150,4 @@ pub use tenant_burst::{
     assess_tenant_bursts,
 };
 pub use tenant_fairness::{TenantFairnessBreach, TenantQueueDepth, assess_tenant_fairness};
+pub use tenant_quota_forecast::{QuotaForecast, TenantQuotaSample, forecast_tenant_quotas};
