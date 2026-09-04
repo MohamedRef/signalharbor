@@ -16,6 +16,7 @@ mod failure_classifier;
 mod idempotency_horizon;
 mod ingress;
 mod journal;
+mod maintenance_window;
 mod model;
 mod payload_size;
 mod quarantine_capacity;
@@ -77,6 +78,9 @@ pub use idempotency_horizon::{
 };
 pub use ingress::{
     AdmissionDecision, IngressGate, IngressQuota, IngressRejectReason, IngressUsage,
+};
+pub use maintenance_window::{
+    EndpointMaintenanceWindow, MaintenanceWindowState, assess_maintenance_windows,
 };
 pub use model::{
     AttemptHistorySummary, AttemptOutcome, AttemptResult, BackfillRequest, BackfillResult,
