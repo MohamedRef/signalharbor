@@ -2,6 +2,7 @@ mod casebook;
 mod certificate_expiry;
 mod clock_skew;
 mod credential_rotation;
+mod deduplication_audit;
 mod delivery_batch;
 mod delivery_deadline;
 mod endpoint_drain;
@@ -32,6 +33,7 @@ pub use clock_skew::{ClockSkewAssessment, ClockSkewDecision, ClockSkewInput, ass
 pub use credential_rotation::{
     CredentialRotation, EndpointCredential, RotationReadiness, plan_credential_rotations,
 };
+pub use deduplication_audit::{DedupeKeyAudit, DedupeObservation, audit_deduplication};
 pub use delivery_batch::{BatchEvent, DeliveryBatch, build_delivery_batches};
 pub use delivery_deadline::{
     DeliveryDeadlineAssessment, DeliveryDeadlineInput, DeliveryUrgency, assess_delivery_deadlines,
