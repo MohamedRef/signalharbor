@@ -44,10 +44,15 @@ pub fn assess_content_types(
             || allowed.iter().any(String::is_empty)
             || allowed.len() != policy.allowed_media_types.len()
             || configured
-                .insert(route.to_ascii_lowercase(), (route, allowed, policy.require_utf8))
+                .insert(
+                    route.to_ascii_lowercase(),
+                    (route, allowed, policy.require_utf8),
+                )
                 .is_some()
         {
-            return Err(HarborError::Validation("invalid content type policy".into()));
+            return Err(HarborError::Validation(
+                "invalid content type policy".into(),
+            ));
         }
     }
     let mut seen = BTreeSet::new();
@@ -57,15 +62,20 @@ pub fn assess_content_types(
         let route_key = observation.route_id.trim().to_ascii_lowercase();
         let media_type = observation.media_type.trim().to_ascii_lowercase();
         if event.is_empty() || media_type.is_empty() || !seen.insert(event.to_ascii_lowercase()) {
-            return Err(HarborError::Validation("invalid content observation".into()));
+            return Err(HarborError::Validation(
+                "invalid content observation".into(),
+            ));
         }
         let Some((route, allowed, require_utf8)) = configured.get(&route_key) else {
-            return Err(HarborError::Validation("content observation route is unknown".into()));
+            return Err(HarborError::Validation(
+                "content observation route is unknown".into(),
+            ));
         };
         let charset = observation.charset.as_deref().map(str::trim);
         let state = if !allowed.contains(&media_type) {
             "unsupported_media_type"
-        } else if *require_utf8 && !charset.is_some_and(|value| value.eq_ignore_ascii_case("utf-8")) {
+        } else if *require_utf8 && !charset.is_some_and(|value| value.eq_ignore_ascii_case("utf-8"))
+        {
             "charset_rejected"
         } else {
             "accepted"
