@@ -3,6 +3,7 @@ mod certificate_expiry;
 mod clock_skew;
 mod compression_readiness;
 mod credential_rotation;
+mod dead_letter_export;
 mod deduplication_audit;
 mod delivery_batch;
 mod delivery_deadline;
@@ -42,6 +43,9 @@ pub use compression_readiness::{
 };
 pub use credential_rotation::{
     CredentialRotation, EndpointCredential, RotationReadiness, plan_credential_rotations,
+};
+pub use dead_letter_export::{
+    DeadLetterExportPlan, DeadLetterPartition, ExportCapacity, plan_dead_letter_exports,
 };
 pub use deduplication_audit::{DedupeKeyAudit, DedupeObservation, audit_deduplication};
 pub use delivery_batch::{BatchEvent, DeliveryBatch, build_delivery_batches};
