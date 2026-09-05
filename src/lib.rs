@@ -20,6 +20,7 @@ mod ingress;
 mod journal;
 mod maintenance_window;
 mod model;
+pub mod payload_encryption_attestation;
 mod payload_size;
 mod quarantine_capacity;
 mod quarantine_release;
