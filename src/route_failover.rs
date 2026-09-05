@@ -44,7 +44,7 @@ pub fn plan_route_failover(
                 "failover endpoint and positive priority are required".into(),
             ));
         }
-        if !seen.insert(endpoint.endpoint.clone()) {
+        if !seen.insert(endpoint.endpoint.to_ascii_lowercase()) {
             return Err(HarborError::Validation(format!(
                 "duplicate failover endpoint {}",
                 endpoint.endpoint
