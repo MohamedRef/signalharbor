@@ -24,6 +24,7 @@ mod payload_size;
 mod quarantine_capacity;
 mod quarantine_release;
 mod receiver_capacity;
+pub mod receiver_clock_verification;
 mod receiver_tls_policy;
 mod redrive_throttle;
 mod replay_window;
