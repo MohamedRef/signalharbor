@@ -28,6 +28,9 @@ mod receiver_capacity;
 pub mod receiver_clock_verification;
 mod receiver_tls_policy;
 mod redrive_throttle;
+mod replay_authorization;
+mod replay_evidence;
+mod replay_scope;
 mod replay_window;
 mod retention;
 mod retry_budget;
@@ -123,6 +126,9 @@ pub use receiver_tls_policy::{
 pub use redrive_throttle::{
     RedriveCapacity, RedriveReadiness, RedriveThrottle, calculate_redrive_throttle,
 };
+pub use replay_authorization::{ReplayApproval, ReplayAuthorization, authorize_replay};
+pub use replay_evidence::{ReplayEvidence, ReplayEvidenceReport, assess_replay_evidence};
+pub use replay_scope::{ReplayScope, build_replay_scope};
 pub use replay_window::{
     ReplayWindowAssessment, ReplayWindowReadiness, ReplayWindowRequest, assess_replay_window,
 };
