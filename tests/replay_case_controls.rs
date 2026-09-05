@@ -1,5 +1,7 @@
 use signalharbor::{
-    ReplayApproval, ReplayEvidence, assess_replay_evidence, authorize_replay, build_replay_scope,
+    ReplayApproval, ReplayArtifact, ReplayEventRow, ReplayEvidence, ReplayHeaderSet,
+    assess_replay_evidence, assess_replay_retention, authorize_replay, build_replay_scope,
+    page_replay_events, redact_replay_headers,
 };
 
 #[test]
@@ -35,6 +37,74 @@ fn scopes_replay_and_requires_independent_roles() {
     )
     .unwrap();
     assert!(authorization.authorized);
+}
+
+#[test]
+fn redacts_headers_and_pages_replay_events_stably() {
+    let headers = redact_replay_headers(
+        &ReplayHeaderSet {
+            event_id: "event-a".into(),
+            headers: [
+                ("Authorization".into(), "secret".into()),
+                ("X-Trace".into(), "t".into()),
+            ]
+            .into(),
+        },
+        &["authorization".into()],
+    )
+    .unwrap();
+    assert_eq!(headers.headers["authorization"], "[redacted]");
+    let page = page_replay_events(
+        &[
+            ReplayEventRow {
+                event_id: "b".into(),
+                received_at_epoch: 2,
+            },
+            ReplayEventRow {
+                event_id: "a".into(),
+                received_at_epoch: 1,
+            },
+        ],
+        None,
+        1,
+    )
+    .unwrap();
+    assert_eq!(page.rows[0].event_id, "a");
+    assert_eq!(page.next_cursor.as_deref(), Some("a"));
+}
+
+#[test]
+fn preserves_legal_holds_during_replay_retention() {
+    let decisions = assess_replay_retention(
+        &[
+            ReplayArtifact {
+                artifact_id: "expired".into(),
+                created_at_epoch: 0,
+                retention_days: 1,
+                legal_hold: false,
+                active_replay: false,
+            },
+            ReplayArtifact {
+                artifact_id: "held".into(),
+                created_at_epoch: 0,
+                retention_days: 1,
+                legal_hold: true,
+                active_replay: false,
+            },
+        ],
+        200_000,
+    )
+    .unwrap();
+    assert!(
+        decisions
+            .iter()
+            .any(|item| item.artifact_id == "expired" && item.purge_eligible)
+    );
+    assert!(
+        decisions
+            .iter()
+            .any(|item| item.artifact_id == "held" && !item.purge_eligible)
+    );
 }
 
 #[test]
