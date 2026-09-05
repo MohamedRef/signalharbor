@@ -30,9 +30,10 @@ pub fn build_retry_ceiling(
         || policy.multiplier < 2
         || policy.maximum_delay_seconds < policy.base_delay_seconds
         || policy.maximum_attempts == 0
+        || policy.maximum_attempts > 10_000
     {
         return Err(HarborError::Validation(
-            "invalid retry ceiling policy".into(),
+            "invalid retry ceiling policy; attempts must be from 1 through 10000".into(),
         ));
     }
     let mut delay = policy.base_delay_seconds;
