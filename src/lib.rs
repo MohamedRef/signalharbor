@@ -31,6 +31,7 @@ mod replay_window;
 mod retention;
 mod retry_budget;
 mod retry_ceiling;
+pub mod retry_drain_capacity;
 mod retry_plan;
 mod retry_saturation;
 mod route_drain_capacity;
