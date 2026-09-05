@@ -30,7 +30,9 @@ mod receiver_tls_policy;
 mod redrive_throttle;
 mod replay_authorization;
 mod replay_evidence;
+mod replay_export;
 mod replay_pagination;
+mod replay_queue;
 mod replay_redaction;
 mod replay_retention_policy;
 mod replay_scope;
@@ -131,7 +133,9 @@ pub use redrive_throttle::{
 };
 pub use replay_authorization::{ReplayApproval, ReplayAuthorization, authorize_replay};
 pub use replay_evidence::{ReplayEvidence, ReplayEvidenceReport, assess_replay_evidence};
+pub use replay_export::{ReplayExportEvent, ReplayExportRow, build_replay_export};
 pub use replay_pagination::{ReplayEventPage, ReplayEventRow, page_replay_events};
+pub use replay_queue::{ReplayQueueDecision, ReplayQueueEntry, allocate_replay_queue};
 pub use replay_redaction::{RedactedReplayHeaders, ReplayHeaderSet, redact_replay_headers};
 pub use replay_retention_policy::{
     ReplayArtifact, ReplayRetentionDecision, assess_replay_retention,

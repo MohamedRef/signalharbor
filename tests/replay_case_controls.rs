@@ -1,6 +1,7 @@
 use signalharbor::{
-    ReplayApproval, ReplayArtifact, ReplayEventRow, ReplayEvidence, ReplayHeaderSet,
-    assess_replay_evidence, assess_replay_retention, authorize_replay, build_replay_scope,
+    ReplayApproval, ReplayArtifact, ReplayEventRow, ReplayEvidence, ReplayExportEvent,
+    ReplayHeaderSet, ReplayQueueEntry, allocate_replay_queue, assess_replay_evidence,
+    assess_replay_retention, authorize_replay, build_replay_export, build_replay_scope,
     page_replay_events, redact_replay_headers,
 };
 
@@ -37,6 +38,57 @@ fn scopes_replay_and_requires_independent_roles() {
     )
     .unwrap();
     assert!(authorization.authorized);
+}
+
+#[test]
+fn exports_stably_and_applies_tenant_replay_limits() {
+    let rows = build_replay_export(
+        &[
+            ReplayExportEvent {
+                event_id: "b".into(),
+                route_id: "route".into(),
+                received_at_epoch: 2,
+                attempt_count: 2,
+                disposition: "failed".into(),
+            },
+            ReplayExportEvent {
+                event_id: "a".into(),
+                route_id: "route".into(),
+                received_at_epoch: 1,
+                attempt_count: 1,
+                disposition: "failed".into(),
+            },
+        ],
+        10,
+    )
+    .unwrap();
+    assert_eq!(rows[0].event_id, "a");
+    assert_eq!(rows[0].ordinal, 1);
+    let decisions = allocate_replay_queue(
+        &[
+            ReplayQueueEntry {
+                replay_id: "one".into(),
+                tenant_id: "tenant".into(),
+                event_count: 4,
+                oldest_age_minutes: 10,
+                priority: 5,
+                authorized: true,
+            },
+            ReplayQueueEntry {
+                replay_id: "two".into(),
+                tenant_id: "tenant".into(),
+                event_count: 4,
+                oldest_age_minutes: 5,
+                priority: 1,
+                authorized: true,
+            },
+        ],
+        10,
+        5,
+    )
+    .unwrap();
+    assert_eq!(decisions[0].admitted_events, 4);
+    assert_eq!(decisions[1].admitted_events, 1);
 }
 
 #[test]
