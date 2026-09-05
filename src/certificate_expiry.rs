@@ -44,7 +44,7 @@ pub fn plan_certificate_renewals(
                 "endpoint, fingerprint, expiry, and renewal lead are required".into(),
             ));
         }
-        if !endpoints.insert(endpoint_id.to_owned()) {
+        if !endpoints.insert(endpoint_id.to_ascii_lowercase()) {
             return Err(HarborError::Validation(format!(
                 "duplicate certificate endpoint {endpoint_id}"
             )));
@@ -55,7 +55,7 @@ pub fn plan_certificate_renewals(
         if renew_by_epoch <= as_of_epoch {
             renewals.push(CertificateRenewal {
                 endpoint_id: endpoint_id.to_owned(),
-                fingerprint: fingerprint.to_owned(),
+                fingerprint: fingerprint.to_ascii_lowercase(),
                 renew_by_epoch,
                 expired: row.expires_at_epoch <= as_of_epoch,
             });
